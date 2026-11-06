@@ -1,0 +1,704 @@
+:root {
+  --bg-primary: #0a0e14;
+  --bg-panel: rgba(16, 23, 34, 0.85);
+  --bg-card: rgba(24, 34, 50, 0.9);
+  --border-color: rgba(64, 130, 200, 0.25);
+  --border-active: #00d2ff;
+  --text-primary: #e6edf3;
+  --text-muted: #8b949e;
+  --accent-cyan: #00d2ff;
+  --accent-orange: #ff7b00;
+  --accent-red: #ff334b;
+  --accent-green: #00e676;
+  --accent-yellow: #ffd600;
+  --font-mono: 'Consolas', 'Fira Code', 'Courier New', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  user-select: none;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+#canvas-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* Top Navigation / Telemetry Header */
+.top-hud {
+  position: absolute;
+  top: 12px;
+  left: 16px;
+  right: 16px;
+  height: 52px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  backdrop-filter: blur(10px);
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 18px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.brand-icon {
+  font-size: 20px;
+}
+
+.brand-title {
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 1.5px;
+  color: #fff;
+  text-transform: uppercase;
+}
+
+.brand-badge {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  background: rgba(0, 210, 255, 0.15);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 210, 255, 0.3);
+}
+
+.telemetry-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.telemetry-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.telemetry-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  letter-spacing: 0.8px;
+}
+
+.telemetry-value {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 600;
+  color: #fff;
+}
+
+.state-badge {
+  padding: 3px 10px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  letter-spacing: 1px;
+  background: rgba(0, 210, 255, 0.2);
+  color: var(--accent-cyan);
+  border: 1px solid var(--accent-cyan);
+  text-transform: uppercase;
+  transition: all 0.2s ease;
+}
+
+.state-badge.searching {
+  background: rgba(0, 210, 255, 0.15);
+  color: var(--accent-cyan);
+  border-color: var(--accent-cyan);
+}
+.state-badge.aligning, .state-badge.approaching {
+  background: rgba(255, 123, 0, 0.2);
+  color: var(--accent-orange);
+  border-color: var(--accent-orange);
+}
+.state-badge.extinguishing {
+  background: rgba(255, 51, 75, 0.25);
+  color: var(--accent-red);
+  border-color: var(--accent-red);
+  animation: pulse-red 1s infinite alternate;
+}
+.state-badge.cooldown {
+  background: rgba(0, 230, 118, 0.2);
+  color: var(--accent-green);
+  border-color: var(--accent-green);
+}
+.state-badge.obstacle_avoid {
+  background: rgba(255, 214, 0, 0.2);
+  color: var(--accent-yellow);
+  border-color: var(--accent-yellow);
+}
+.state-badge.task_complete, .state-badge.all_clear {
+  background: rgba(0, 230, 118, 0.25);
+  color: var(--accent-green);
+  border-color: var(--accent-green);
+  animation: pulse-green 1.2s infinite alternate;
+}
+
+@keyframes pulse-red {
+  from { box-shadow: 0 0 5px rgba(255, 51, 75, 0.4); }
+  to { box-shadow: 0 0 15px rgba(255, 51, 75, 0.9); }
+}
+
+@keyframes pulse-green {
+  from { box-shadow: 0 0 5px rgba(0, 230, 118, 0.4); }
+  to { box-shadow: 0 0 16px rgba(0, 230, 118, 0.95); }
+}
+
+.sync-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-red);
+}
+
+.status-dot.connected {
+  background: var(--accent-green);
+  box-shadow: 0 0 8px var(--accent-green);
+}
+
+/* Floating View Mode Buttons (Top Left) */
+.view-modes {
+  position: absolute;
+  top: 76px;
+  left: 16px;
+  display: flex;
+  gap: 6px;
+  z-index: 10;
+}
+
+.view-btn {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  backdrop-filter: blur(8px);
+  transition: all 0.2s ease;
+}
+
+.view-btn:hover {
+  background: rgba(30, 45, 65, 0.9);
+  border-color: var(--accent-cyan);
+}
+
+.view-btn.active {
+  background: rgba(0, 210, 255, 0.2);
+  border-color: var(--accent-cyan);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(0, 210, 255, 0.3);
+}
+
+/* Right Control Sidebar */
+.control-sidebar {
+  position: absolute;
+  top: 76px;
+  right: 16px;
+  width: 320px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 10;
+  overflow-y: auto;
+  pointer-events: none;
+}
+
+.control-sidebar > * {
+  pointer-events: auto;
+}
+
+.panel-card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.panel-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--accent-cyan);
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.panel-subtitle {
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: normal;
+  text-transform: none;
+}
+
+/* Environment Spawn Buttons */
+.tool-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.btn-tool {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.btn-tool:hover {
+  background: rgba(40, 60, 85, 0.9);
+  border-color: var(--accent-cyan);
+  transform: translateY(-1px);
+}
+
+.btn-tool.fire {
+  border-color: rgba(255, 123, 0, 0.4);
+}
+.btn-tool.fire:hover {
+  background: rgba(255, 123, 0, 0.2);
+  border-color: var(--accent-orange);
+}
+
+.btn-tool.danger {
+  border-color: rgba(255, 51, 75, 0.4);
+}
+.btn-tool.danger:hover {
+  background: rgba(255, 51, 75, 0.2);
+  border-color: var(--accent-red);
+}
+
+/* Digital Twin Sync Modes */
+.sync-mode-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.mode-radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.2s ease;
+}
+
+.mode-radio:hover {
+  border-color: var(--accent-cyan);
+}
+
+.mode-radio.selected {
+  background: rgba(0, 210, 255, 0.15);
+  border-color: var(--accent-cyan);
+  color: #fff;
+}
+
+.mode-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.mode-name {
+  font-weight: 600;
+}
+
+.mode-desc {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Serial Port Connector Bar */
+.serial-bar {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.serial-select {
+  flex: 1;
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: #fff;
+  border-radius: 4px;
+  padding: 4px 6px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+}
+
+.btn-connect {
+  background: rgba(0, 210, 255, 0.2);
+  border: 1px solid var(--accent-cyan);
+  color: #fff;
+  border-radius: 4px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+
+.btn-connect.connected {
+  background: rgba(255, 51, 75, 0.2);
+  border-color: var(--accent-red);
+  color: var(--accent-red);
+}
+
+/* Ultrasonic Radar Readouts */
+.ultrasonic-gauges {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.gauge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.gauge-name {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  width: 45px;
+}
+
+.gauge-bar-container {
+  flex: 1;
+  height: 8px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  overflow: hidden;
+  position: relative;
+}
+
+.gauge-bar {
+  height: 100%;
+  width: 50%;
+  background: var(--accent-green);
+  border-radius: 4px;
+  transition: width 0.08s ease, background-color 0.2s ease;
+}
+
+.gauge-val {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  width: 50px;
+  text-align: right;
+}
+
+/* Flame & Actuator Status */
+.actuator-indicators {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.actuator-box {
+  background: var(--bg-card);
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+  text-align: center;
+}
+
+.actuator-box-label {
+  font-size: 9px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.actuator-box-val {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+.indicator-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #444;
+  margin-right: 4px;
+}
+
+.indicator-dot.active-flame {
+  background: var(--accent-orange);
+  box-shadow: 0 0 8px var(--accent-orange);
+}
+
+.indicator-dot.active-solenoid {
+  background: var(--accent-cyan);
+  box-shadow: 0 0 8px var(--accent-cyan);
+}
+
+/* Bottom Left: First Person Camera PIP & Teleop Keypad */
+.bottom-left-dock {
+  position: absolute;
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.bottom-left-dock > * {
+  pointer-events: auto;
+}
+
+.pip-camera-card {
+  width: 250px;
+  height: 195px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  overflow: hidden;
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+
+.pip-header {
+  padding: 6px 10px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: rgba(0, 0, 0, 0.3);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pip-viewport {
+  position: relative;
+  flex: 1;
+  background: #000;
+  overflow: hidden;
+}
+
+#pip-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  transform: scaleX(-1);
+}
+
+.pip-crosshair {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 30px;
+  height: 30px;
+  pointer-events: none;
+}
+
+.pip-crosshair::before, .pip-crosshair::after {
+  content: '';
+  position: absolute;
+  background: rgba(0, 210, 255, 0.5);
+}
+
+.pip-crosshair::before {
+  top: 14px;
+  left: 0;
+  width: 30px;
+  height: 2px;
+}
+
+.pip-crosshair::after {
+  top: 0;
+  left: 14px;
+  width: 2px;
+  height: 30px;
+}
+
+.pip-bbox {
+  position: absolute;
+  border: 2px solid var(--accent-orange);
+  background: rgba(255, 123, 0, 0.15);
+  display: none;
+  pointer-events: none;
+}
+
+.pip-bbox-label {
+  position: absolute;
+  top: -14px;
+  left: 0;
+  font-size: 8px;
+  background: var(--accent-orange);
+  color: #000;
+  font-weight: 700;
+  padding: 1px 3px;
+  font-family: var(--font-mono);
+}
+
+/* Manual Teleop Overlay Pad */
+.teleop-pad {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px;
+  backdrop-filter: blur(10px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.teleop-header {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  text-align: center;
+}
+
+.teleop-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 36px);
+  grid-template-rows: repeat(2, 36px);
+  gap: 6px;
+}
+
+.key-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.key-btn:hover {
+  background: rgba(0, 210, 255, 0.2);
+  border-color: var(--accent-cyan);
+}
+
+.key-btn.pressed {
+  background: var(--accent-cyan);
+  color: #000;
+  box-shadow: 0 0 10px var(--accent-cyan);
+}
+
+.key-btn.empty {
+  visibility: hidden;
+}
+
+/* Model Upload Toast & Instructions */
+.model-info-banner {
+  font-size: 10px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  margin-top: 6px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  padding-top: 6px;
+}
+
+.btn-upload {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px 10px;
+  background: rgba(0, 210, 255, 0.1);
+  border: 1px dashed var(--accent-cyan);
+  color: var(--accent-cyan);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-align: center;
+  transition: all 0.2s ease;
+  display: block;
+}
+
+.btn-upload:hover {
+  background: rgba(0, 210, 255, 0.25);
+}
+
+/* Hints & Toast Notification */
+.placement-hint {
+  position: absolute;
+  bottom: 80px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+  border: 1px solid var(--accent-cyan);
+  color: #fff;
+  padding: 8px 16px;
+  border-radius: 20px;
+  font-size: 12px;
+  pointer-events: none;
+  z-index: 100;
+  display: none;
+}

@@ -1,0 +1,369 @@
+/**
+ * BANTAY-SUNOG 3D Simulation World
+ * Scene setup, arena enclosure, lighting, camera view modes, and main animation loop.
+ */
+
+class SimWorld {
+  constructor(containerElement, pipCanvasElement) {
+    this.container = containerElement;
+    this.pipCanvas = pipCanvasElement;
+
+    this.arenaRadius = 4.8;
+    this.arenaWidth = 9.0;
+    this.arenaHeight = 9.0;
+
+    this.viewMode = 'orbit'; // 'orbit', 'follow', 'top'
+
+    this.clock = new THREE.Clock();
+    this.arenaWalls = [];
+
+    this.initScene();
+    this.initLights();
+    this.initArena();
+    this.initEntities();
+    this.initInteractions();
+
+    window.addEventListener('resize', () => this.onWindowResize(), false);
+  }
+
+  initScene() {
+    this.scene = new THREE.Scene();
+    this.scene.background = new THREE.Color(0x0a0e14);
+    this.scene.fog = new THREE.FogExp2(0x0a0e14, 0.035);
+
+    // Main Orbit Camera
+    this.camera = new THREE.PerspectiveCamera(
+      55,
+      this.container.clientWidth / this.container.clientHeight,
+      0.1,
+      100.0
+    );
+    this.camera.position.set(0, 5.5, 6.5);
+
+    // Renderer
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    this.renderer.setSize(this.container.clientWidth, this.container.clientHeight);
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.1;
+
+    this.container.appendChild(this.renderer.domElement);
+
+    // Orbit Controls
+    if (typeof THREE.OrbitControls !== 'undefined') {
+      this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+      this.controls.enableDamping = true;
+      this.controls.dampingFactor = 0.08;
+      this.controls.maxPolarAngle = Math.PI / 2 - 0.02; // Don't go below floor
+      this.controls.minDistance = 1.0;
+      this.controls.maxDistance = 25.0;
+      this.controls.target.set(0, 0.2, 0);
+    }
+  }
+
+  initLights() {
+    // Ambient light
+    const ambientLight = new THREE.AmbientLight(0x384252, 1.2);
+    this.scene.add(ambientLight);
+
+    // Main directional overhead light
+    this.dirLight = new THREE.DirectionalLight(0xfff5ea, 1.5);
+    this.dirLight.position.set(5, 10, 6);
+    this.dirLight.castShadow = true;
+    this.dirLight.shadow.mapSize.width = 2048;
+    this.dirLight.shadow.mapSize.height = 2048;
+    this.dirLight.shadow.camera.near = 0.5;
+    this.dirLight.shadow.camera.far = 25;
+    const d = 6.0;
+    this.dirLight.shadow.camera.left = -d;
+    this.dirLight.shadow.camera.right = d;
+    this.dirLight.shadow.camera.top = d;
+    this.dirLight.shadow.camera.bottom = -d;
+    this.dirLight.shadow.bias = -0.0005;
+    this.scene.add(this.dirLight);
+
+    // Subtle blue rim light
+    const rimLight = new THREE.DirectionalLight(0x00d2ff, 0.5);
+    rimLight.position.set(-6, 4, -6);
+    this.scene.add(rimLight);
+  }
+
+  initArena() {
+    // Floor
+    const floorGeo = new THREE.PlaneGeometry(this.arenaWidth, this.arenaHeight);
+    floorGeo.rotateX(-Math.PI / 2);
+    const floorMat = new THREE.MeshStandardMaterial({
+      color: 0x121720,
+      roughness: 0.85,
+      metalness: 0.15
+    });
+    this.floor = new THREE.Mesh(floorGeo, floorMat);
+    this.floor.receiveShadow = true;
+    this.scene.add(this.floor);
+
+    // Visual Grid (0.5m grid intervals)
+    const grid = new THREE.GridHelper(this.arenaWidth, 18, 0x00d2ff, 0x1e293b);
+    grid.position.y = 0.002;
+    this.scene.add(grid);
+
+    // Perimeter Boundary Walls
+    const wallHeight = 0.7;
+    const wallThick = 0.15;
+    const halfW = this.arenaWidth / 2;
+    const halfH = this.arenaHeight / 2;
+
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      roughness: 0.7,
+      metalness: 0.3
+    });
+
+    const wallConfigs = [
+      { x: 0, z: halfH, w: this.arenaWidth + wallThick, h: wallHeight, d: wallThick },   // North
+      { x: 0, z: -halfH, w: this.arenaWidth + wallThick, h: wallHeight, d: wallThick },  // South
+      { x: -halfW, z: 0, w: wallThick, h: wallHeight, d: this.arenaHeight },             // West
+      { x: halfW, z: 0, w: wallThick, h: wallHeight, d: this.arenaHeight }              // East
+    ];
+
+    wallConfigs.forEach((c) => {
+      const geo = new THREE.BoxGeometry(c.w, c.h, c.d);
+      const wall = new THREE.Mesh(geo, wallMat);
+      wall.position.set(c.x, c.h / 2, c.z);
+      wall.castShadow = true;
+      wall.receiveShadow = true;
+      wall.userData = { isWall: true };
+      this.scene.add(wall);
+      this.arenaWalls.push(wall);
+    });
+  }
+
+  initEntities() {
+    // Fire System
+    this.fireSystem = new FireSystem(this.scene);
+
+    // Obstacle Manager
+    this.obstacleManager = new ObstacleManager(this.scene);
+    this.obstacleManager.loadDefaultLayout();
+
+    // Robot Digital Twin
+    this.robot = new RobotModel(this.scene);
+
+    // Sensor Simulator
+    this.sensors = new SensorSimulator(
+      this.scene,
+      this.robot,
+      this.fireSystem,
+      this.obstacleManager,
+      this.pipCanvas
+    );
+
+    // 3D Asset Loader for custom user model
+    this.assetLoader = new AssetLoader(this.robot);
+
+    // Prediction Path Visualizer
+    this.predictionPath = new PredictionPath(this.scene);
+
+    // Spawn 1 initial test fire in open central lane
+    this.fireSystem.spawnFire(0.0, 1.2, 1.0);
+  }
+
+  initInteractions() {
+    this.raycaster = new THREE.Raycaster();
+    this.mouse = new THREE.Vector2();
+    this.placementMode = null; // 'fire', 'box', 'wall', 'cylinder'
+
+    this.renderer.domElement.addEventListener('pointerdown', (e) => this.onPointerDown(e), false);
+  }
+
+  setPlacementMode(mode) {
+    this.placementMode = mode;
+    this.renderer.domElement.style.cursor = mode ? 'crosshair' : 'default';
+  }
+
+  onPointerDown(e) {
+    if (!this.placementMode) return;
+
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+    const intersects = this.raycaster.intersectObject(this.floor);
+
+    if (intersects.length > 0) {
+      const pt = intersects[0].point;
+      const x = Math.round(pt.x * 10) / 10;
+      const z = Math.round(pt.z * 10) / 10;
+
+      if (this.placementMode === 'fire') {
+        this.fireSystem.spawnFire(x, z, 1.0);
+        if (this.onFireSpawned) this.onFireSpawned();
+      } else if (this.placementMode === 'box') {
+        this.obstacleManager.createBox(x, z);
+      } else if (this.placementMode === 'wall') {
+        this.obstacleManager.createWall(x, z);
+      } else if (this.placementMode === 'cylinder') {
+        this.obstacleManager.createCylinder(x, z);
+      }
+
+      // Reset placement mode after placing
+      this.setPlacementMode(null);
+      if (this.onPlacementComplete) this.onPlacementComplete();
+    }
+  }
+
+  setViewMode(mode) {
+    this.viewMode = mode;
+    if (mode === 'top') {
+      this.camera.position.set(0, 11, 0.01);
+      if (this.controls) this.controls.target.set(0, 0, 0);
+    } else if (mode === 'orbit') {
+      this.camera.position.set(0, 5.5, 6.5);
+      if (this.controls) this.controls.target.set(0, 0.2, 0);
+    }
+  }
+
+  onWindowResize() {
+    const width = this.container.clientWidth;
+    const height = this.container.clientHeight;
+
+    this.camera.aspect = width / height;
+    this.camera.updateProjectionMatrix();
+
+    this.renderer.setSize(width, height);
+  }
+
+  update() {
+    const dt = Math.min(this.clock.getDelta(), 0.05);
+
+    // 1. Update Robot Kinematics & Collisions (Pass rectangular arena bounds)
+    const obstacles = this.obstacleManager.getRaycastMeshes();
+    const arenaBounds = { maxX: (this.arenaWidth / 2) - 0.255, maxZ: (this.arenaHeight / 2) - 0.255 };
+    this.robot.update(dt, obstacles, arenaBounds);
+
+    // 2. Update Sensors
+    this.sensors.update(dt, this.arenaWalls);
+
+    // 3. Update Fire particles & billboard
+    this.fireSystem.update(dt, this.camera);
+
+    // 4. Update Camera View Modes
+    if (this.viewMode === 'follow') {
+      // 3rd Person follow camera behind robot
+      const offsetDist = 1.6;
+      const offsetHeight = 0.9;
+      const camYaw = this.robot.yaw;
+
+      const targetX = this.robot.position.x - Math.sin(camYaw) * offsetDist;
+      const targetZ = this.robot.position.z - Math.cos(camYaw) * offsetDist;
+
+      this.camera.position.lerp(new THREE.Vector3(targetX, this.robot.position.y + offsetHeight, targetZ), 0.1);
+      const lookTarget = this.robot.position.clone().add(new THREE.Vector3(0, 0.25, 0));
+      this.camera.lookAt(lookTarget);
+    } else if (this.controls) {
+      this.controls.update();
+    }
+
+    // 5. Main 3D Render
+    this.renderer.render(this.scene, this.camera);
+  }
+}
+
+/**
+ * 3D Prediction Path Visualizer
+ * Projects trajectory line, waypoints, and destination target on the floor.
+ */
+class PredictionPath {
+  constructor(scene) {
+    this.scene = scene;
+    this.maxPoints = 50;
+
+    const positions = new Float32Array(this.maxPoints * 3);
+    this.geometry = new THREE.BufferGeometry();
+    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+
+    this.material = new THREE.LineBasicMaterial({
+      color: 0x00d2ff,
+      linewidth: 3,
+      transparent: true,
+      opacity: 0.85
+    });
+
+    this.line = new THREE.Line(this.geometry, this.material);
+    this.line.frustumCulled = false;
+    this.scene.add(this.line);
+
+    // Waypoint dot beads
+    const dotPositions = new Float32Array(this.maxPoints * 3);
+    this.dotGeometry = new THREE.BufferGeometry();
+    this.dotGeometry.setAttribute('position', new THREE.BufferAttribute(dotPositions, 3));
+    this.dotMaterial = new THREE.PointsMaterial({
+      color: 0x00e676,
+      size: 0.08,
+      transparent: true,
+      opacity: 0.95
+    });
+    this.dots = new THREE.Points(this.dotGeometry, this.dotMaterial);
+    this.dots.frustumCulled = false;
+    this.scene.add(this.dots);
+
+    // Target destination ring
+    const ringGeo = new THREE.RingGeometry(0.06, 0.12, 16);
+    ringGeo.rotateX(-Math.PI / 2);
+    this.ringMat = new THREE.MeshBasicMaterial({ color: 0x00d2ff, side: THREE.DoubleSide });
+    this.tipRing = new THREE.Mesh(ringGeo, this.ringMat);
+    this.tipRing.position.y = 0.015;
+    this.scene.add(this.tipRing);
+  }
+
+  update(points, mode = 'scan') {
+    if (!points || points.length < 2) {
+      this.line.visible = false;
+      this.dots.visible = false;
+      this.tipRing.visible = false;
+      return;
+    }
+
+    this.line.visible = true;
+    this.dots.visible = true;
+    this.tipRing.visible = true;
+
+    // Color by mode: scan (cyan/green), avoid (red/amber), target (orange/fire)
+    if (mode === 'avoid') {
+      this.material.color.setHex(0xff334b);
+      this.dotMaterial.color.setHex(0xffaa00);
+      this.ringMat.color.setHex(0xff334b);
+    } else if (mode === 'target') {
+      this.material.color.setHex(0xff7b00);
+      this.dotMaterial.color.setHex(0xff334b);
+      this.ringMat.color.setHex(0xff7b00);
+    } else {
+      this.material.color.setHex(0x00d2ff);
+      this.dotMaterial.color.setHex(0x00e676);
+      this.ringMat.color.setHex(0x00d2ff);
+    }
+
+    const pos = this.geometry.attributes.position;
+    const dotPos = this.dotGeometry.attributes.position;
+    const count = Math.min(points.length, this.maxPoints);
+
+    for (let i = 0; i < this.maxPoints; i++) {
+      if (i < count) {
+        pos.setXYZ(i, points[i].x, 0.015, points[i].z);
+        dotPos.setXYZ(i, points[i].x, 0.018, points[i].z);
+      } else {
+        const last = points[count - 1];
+        pos.setXYZ(i, last.x, 0.015, last.z);
+        dotPos.setXYZ(i, last.x, 0.018, last.z);
+      }
+    }
+
+    pos.needsUpdate = true;
+    dotPos.needsUpdate = true;
+
+    const tip = points[count - 1];
+    this.tipRing.position.set(tip.x, 0.015, tip.z);
+  }
+}

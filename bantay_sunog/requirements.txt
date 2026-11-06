@@ -1,0 +1,13 @@
+# BANTAY-SUNOG Requirements for Raspberry Pi 3B (ARM Cortex-A53, 1GB RAM)
+
+# Computer Vision & Math
+numpy>=1.21.0
+opencv-python-headless>=4.5.0
+
+# Hardware & Telemetry
+pyserial>=3.5
+psutil>=5.8.0
+
+# Lightweight ML Inference (Optional - needed only when running .tflite models)
+# On modern aarch64 Raspberry Pi OS, install ai-edge-litert or system python3-tflite-runtime:
+# ai-edge-litert>=1.0.0; platform_machine=="aarch64"

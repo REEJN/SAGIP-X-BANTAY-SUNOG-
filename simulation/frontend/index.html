@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BANTAY-SUNOG 3D Digital Twin Simulator</title>
+  <link rel="stylesheet" href="css/dashboard.css">
+  <!-- Three.js & Controls from trusted CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/OBJLoader.js"></script>
+</head>
+<body>
+
+  <!-- Fullscreen 3D Scene Viewport -->
+  <div id="canvas-container"></div>
+
+  <!-- Top Telemetry & Status HUD -->
+  <header class="top-hud">
+    <div class="brand">
+      <span class="brand-icon">🔥</span>
+      <span class="brand-title">BANTAY-SUNOG</span>
+      <span class="brand-badge">3D DIGITAL TWIN</span>
+    </div>
+
+    <div class="telemetry-row">
+      <div class="telemetry-item">
+        <span class="telemetry-label">SYSTEM STATE</span>
+        <span id="hud-state-badge" class="state-badge searching">SEARCHING</span>
+      </div>
+
+      <div class="telemetry-item">
+        <span class="telemetry-label">TILT SERVO</span>
+        <span id="hud-tilt-txt" class="telemetry-value">90°</span>
+      </div>
+
+      <div class="telemetry-item">
+        <span class="telemetry-label">MOTORS (PWM)</span>
+        <span id="hud-pwm-txt" class="telemetry-value">L:0 | R:0</span>
+      </div>
+
+      <div class="telemetry-item">
+        <span class="telemetry-label">HARDWARE LINK</span>
+        <div class="sync-status">
+          <div id="ws-status-dot" class="status-dot"></div>
+          <span id="ws-status-text">STANDALONE (LOCAL)</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- View Mode Switcher Buttons -->
+  <div class="view-modes">
+    <button class="view-btn active" data-view="orbit">🌐 Orbit View</button>
+    <button class="view-btn" data-view="follow">🏎️ Follow Cam</button>
+    <button class="view-btn" data-view="top">📐 Top Down</button>
+  </div>
+
+  <!-- Placement Hint Floating Pill -->
+  <div id="placement-hint" class="placement-hint">Click on the floor to place object</div>
+
+  <!-- Right Sidebar: Controls & Live Hardware Readings -->
+  <aside class="control-sidebar">
+    <!-- Environment & Obstacle Placement Card -->
+    <div class="panel-card">
+      <div class="panel-title">
+        <span>Arena Environment</span>
+        <span class="panel-subtitle">Interactive Control</span>
+      </div>
+      <div class="tool-grid">
+        <button id="btn-add-fire" class="btn-tool fire">🔥 Add Fire</button>
+        <button id="btn-add-box" class="btn-tool">📦 Add Crate</button>
+        <button id="btn-add-wall" class="btn-tool">🧱 Add Wall</button>
+        <button id="btn-add-cylinder" class="btn-tool">🛢️ Add Barrel</button>
+        <button id="btn-clear-fires" class="btn-tool danger">💨 Clear Fires</button>
+        <button id="btn-randomize-arena" class="btn-tool">🎲 Randomize</button>
+      </div>
+      <button id="btn-reset-robot" class="btn-tool" style="width: 100%; margin-top: 8px;">🔄 Reset Robot to Origin</button>
+    </div>
+
+    <!-- Digital Twin Synchronization Modes -->
+    <div class="panel-card">
+      <div class="panel-title">
+        <span>Digital Twin Sync Mode</span>
+        <span class="panel-subtitle">Hardware Link</span>
+      </div>
+      <div class="sync-mode-selector">
+        <div class="mode-radio selected" data-mode="sil">
+          <div class="mode-info">
+            <span class="mode-name">🤖 Autonomous (SIL Emulation)</span>
+            <span class="mode-desc">Full autonomous room search, target align, approach, and spray logic</span>
+          </div>
+        </div>
+
+        <div class="mode-radio" data-mode="teleop">
+          <div class="mode-info">
+            <span class="mode-name">🎮 Manual Teleop (WASD)</span>
+            <span class="mode-desc">Direct keyboard or keypad steering & suppression control</span>
+          </div>
+        </div>
+
+        <div class="mode-radio" data-mode="sim2hw">
+          <div class="mode-info">
+            <span class="mode-name">💻 Sim ➔ Physical Hardware</span>
+            <span class="mode-desc">Simulated robot commands drive the physical ESP32 motors & tilt servo</span>
+          </div>
+        </div>
+
+        <div class="mode-radio" data-mode="hw2sim">
+          <div class="mode-info">
+            <span class="mode-name">🦾 Physical Hardware ➔ Sim</span>
+            <span class="mode-desc">Real ESP32 telemetry drives the virtual 3D twin in real-time</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sensor Radar Readouts (Ultrasonic + Flame) -->
+    <div class="panel-card">
+      <div class="panel-title">
+        <span>Ultrasonic HC-SR04</span>
+        <span class="panel-subtitle">Rangefinders</span>
+      </div>
+      <div class="ultrasonic-gauges">
+        <div class="gauge-row">
+          <span class="gauge-name">FRONT:</span>
+          <div class="gauge-bar-container">
+            <div id="gauge-bar-front" class="gauge-bar"></div>
+          </div>
+          <span id="gauge-txt-front" class="gauge-val">-- cm</span>
+        </div>
+
+        <div class="gauge-row">
+          <span class="gauge-name">LEFT:</span>
+          <div class="gauge-bar-container">
+            <div id="gauge-bar-left" class="gauge-bar"></div>
+          </div>
+          <span id="gauge-txt-left" class="gauge-val">-- cm</span>
+        </div>
+
+        <div class="gauge-row">
+          <span class="gauge-name">RIGHT:</span>
+          <div class="gauge-bar-container">
+            <div id="gauge-bar-right" class="gauge-bar"></div>
+          </div>
+          <span id="gauge-txt-right" class="gauge-val">-- cm</span>
+        </div>
+      </div>
+
+      <!-- Flame & Suppression Actuator Status -->
+      <div class="actuator-indicators">
+        <div class="actuator-box">
+          <div class="actuator-box-label">IR Flame Sensor</div>
+          <div class="actuator-box-val">
+            <span id="flame-indicator-dot" class="indicator-dot"></span>
+            <span id="flame-indicator-txt">CLEAR</span>
+          </div>
+        </div>
+
+        <div class="actuator-box">
+          <div class="actuator-box-label">Solenoid Nozzle</div>
+          <div class="actuator-box-val">
+            <span id="solenoid-indicator-dot" class="indicator-dot"></span>
+            <span id="solenoid-indicator-txt">OFF</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3D Model Swap Card -->
+    <div class="panel-card">
+      <div class="panel-title">
+        <span>Robot 3D Model</span>
+        <span class="panel-subtitle">Custom Asset</span>
+      </div>
+      <input type="file" id="model-file-input" accept=".glb,.gltf,.obj" style="display: none;">
+      <button id="btn-upload-model" class="btn-upload">📁 Load Custom 3D Model (.glb / .gltf)</button>
+      <div class="model-info-banner">
+        Currently displaying procedural CAD-accurate twin. Once you provide your custom 3D model, click above or drop it into <code>simulation/models/</code>.
+      </div>
+    </div>
+  </aside>
+
+  <!-- Bottom Left: Virtual Camera PIP & Teleop Keypad -->
+  <div class="bottom-left-dock">
+    <!-- Camera Viewport Card -->
+    <div class="pip-camera-card">
+      <div class="pip-header">
+        <span>📷 VIRTUAL WEBCAM (V4L2)</span>
+        <span style="color: var(--accent-cyan);">640x480</span>
+      </div>
+      <div class="pip-viewport">
+        <canvas id="pip-canvas"></canvas>
+        <div class="pip-crosshair"></div>
+        <div id="pip-bbox" class="pip-bbox">
+          <div class="pip-bbox-label">FIRE</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Manual Teleop Control Keypad -->
+    <div class="teleop-pad">
+      <div class="teleop-header">Drive Pad (WASD)</div>
+      <div class="teleop-grid">
+        <button class="key-btn empty"></button>
+        <button class="key-btn" data-key="KeyW" title="Forward">W</button>
+        <button class="key-btn empty"></button>
+
+        <button class="key-btn" data-key="KeyA" title="Pivot Left">A</button>
+        <button class="key-btn" data-key="KeyS" title="Reverse">S</button>
+        <button class="key-btn" data-key="KeyD" title="Pivot Right">D</button>
+      </div>
+
+      <div class="teleop-header" style="margin-top: 4px;">Turret & Solenoid</div>
+      <div class="teleop-grid">
+        <button class="key-btn" data-key="KeyU" title="Tilt Up (+10°)">U</button>
+        <button class="key-btn" data-key="KeyH" title="Tilt Home (90°)">H</button>
+        <button class="key-btn" data-key="KeyJ" title="Tilt Down (-10°)">J</button>
+
+        <button class="key-btn empty"></button>
+        <button class="key-btn" data-key="KeyF" title="Fire Extinguisher Spray" style="color: var(--accent-cyan); border-color: var(--accent-cyan);">F</button>
+        <button class="key-btn empty"></button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Application Initialization -->
+  <script src="js/fire_system.js"></script>
+  <script src="js/obstacle_manager.js"></script>
+  <script src="js/robot_model.js"></script>
+  <script src="js/sensor_simulator.js"></script>
+  <script src="js/asset_loader.js"></script>
+  <script src="js/sim_world.js"></script>
+  <script src="js/ui_controller.js"></script>
+  <script>
+    window.addEventListener('DOMContentLoaded', () => {
+      const container = document.getElementById('canvas-container');
+      const pipCanvas = document.getElementById('pip-canvas');
+
+      const simWorld = new SimWorld(container, pipCanvas);
+      const uiController = new UIController(simWorld);
+
+      // Render Loop
+      function animate() {
+        requestAnimationFrame(animate);
+        simWorld.update();
+        uiController.update(simWorld.clock.getDelta());
+      }
+      animate();
+    });
+  </script>
+</body>
+</html>
