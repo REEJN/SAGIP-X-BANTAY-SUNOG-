@@ -46,60 +46,51 @@ class ExpertPolicy:
                 # Target reached! Hold position for extinguishing spray
                 return 0.0, 0.0
 
-            # Proportional approach speed
-            # Dist > 1.2m -> full approach speed (140 PWM)
-            # Dist 0.48m - 1.2m -> smooth deceleration down to zero
-            dist_factor = float(np.clip((dist_fire - 0.48) / 0.72, 0.0, 1.0))
-            fwd_speed = self.approach_speed * (dist_factor ** 1.5)
+            # 1b. Obstacle directly in path to fire: evade first!
+            if df < 0.55:
+                turn_power = 135.0
+                return (-turn_power, turn_power) if dl >= dr else (turn_power, -turn_power)
 
-            # Visual servoing yaw correction: P-controller with heading rate damping
-            kp_yaw = 120.0
-            kd_yaw = 15.0
-            yaw_steer = (rel_yaw * kp_yaw) - (heading_rate * kd_yaw)
-            yaw_steer = np.clip(yaw_steer, -110.0, 110.0)
+            # 1c. Large heading error: pivot in place to face fire before charging
+            if abs(rel_yaw) > 0.35:
+                turn_power = 125.0
+                return (turn_power, -turn_power) if rel_yaw > 0 else (-turn_power, turn_power)
 
-            # If heading error is large, reduce forward speed to prioritize turning
-            if abs(rel_yaw) > 0.4:
-                fwd_speed *= max(0.15, math.cos(rel_yaw))
-
+            # 1d. Well-aligned with fire: approach with smooth deceleration as fire nears
+            dist_factor = float(np.clip((dist_fire - 0.48) / 1.0, 0.0, 1.0))
+            fwd_speed = self.approach_speed * (dist_factor ** 1.2)
+            yaw_steer = rel_yaw * 110.0
             left_pwm = fwd_speed + yaw_steer
             right_pwm = fwd_speed - yaw_steer
-
-            # Obstacle repulsion overlay (safety reflex while homing)
-            if df < 0.55 or dl < 0.35 or dr < 0.35:
-                obs_steer = (dl - dr) * 110.0
-                if df < 0.40:
-                    left_pwm = -self.turn_speed if dl < dr else self.turn_speed
-                    right_pwm = -left_pwm
-                else:
-                    left_pwm = np.clip(left_pwm - obs_steer, -200.0, 200.0)
-                    right_pwm = np.clip(right_pwm + obs_steer, -200.0, 200.0)
-
             return float(np.clip(left_pwm, -255.0, 255.0)), float(np.clip(right_pwm, -255.0, 255.0))
 
         # ---------------------------------------------------------------------
         # 2. Dynamic Obstacle Avoidance & Wall Repulsion
         # ---------------------------------------------------------------------
-        # Critical proximity pinch (< 0.28m front): reverse pivot
-        if df < 0.28:
+        # Close obstacle in front (< 0.55m): PIVOT IN PLACE away from obstacle (zero forward drive!)
+        if df < 0.55:
+            urgency = (0.55 - df) / 0.55  # 0 to 1
+            turn_power = 125.0 + 30.0 * urgency
             if dl >= dr:
-                # More room on left -> pivot left (right_pwm > left_pwm)
-                return -self.turn_speed, self.turn_speed
+                # More room on left -> pivot left in place (left negative, right positive)
+                return -turn_power, turn_power
             else:
-                # More room on right -> pivot right (left_pwm > right_pwm)
-                return self.turn_speed, -self.turn_speed
+                # More room on right -> pivot right in place (left positive, right negative)
+                return turn_power, -turn_power
 
-        # Close obstacle in front (< 0.70m): smooth curving evasion
-        if df < 0.70:
-            urgency = (0.70 - df) / 0.70  # 0 to 1
+        # Moderate proximity (0.55m to 0.85m): decelerate forward speed and steer away
+        if df < 0.85:
+            urgency = (0.85 - df) / 0.30  # 0 to 1
+            fwd = self.base_speed * (1.0 - urgency)  # drops to 0 at 0.55m!
+            steer = 130.0 * urgency
             if dl >= dr:
-                # More room on left -> steer left (right_pwm > left_pwm)
-                left_pwm = self.base_speed * (1.0 - 0.7 * urgency) - 90.0 * urgency
-                right_pwm = self.base_speed * (1.0 - 0.2 * urgency) + 80.0 * urgency
+                # Steer left
+                left_pwm = fwd - steer
+                right_pwm = fwd + steer
             else:
-                # More room on right -> steer right (left_pwm > right_pwm)
-                left_pwm = self.base_speed * (1.0 - 0.2 * urgency) + 80.0 * urgency
-                right_pwm = self.base_speed * (1.0 - 0.7 * urgency) - 90.0 * urgency
+                # Steer right
+                left_pwm = fwd + steer
+                right_pwm = fwd - steer
             return float(np.clip(left_pwm, -255.0, 255.0)), float(np.clip(right_pwm, -255.0, 255.0))
 
         # Side corridor pinch:

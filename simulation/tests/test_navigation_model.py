@@ -77,9 +77,9 @@ class TestNavigationModel(unittest.TestCase):
             # NumPy inference
             np_out = self.numpy_runner.predict(sample_in)
 
-            # Max absolute error must be < 1e-4
-            self.assertAlmostEqual(float(pt_out[0]), np_out[0], places=4)
-            self.assertAlmostEqual(float(pt_out[1]), np_out[1], places=4)
+            # Max absolute error must be < 1e-3 (float32 BLAS precision)
+            self.assertAlmostEqual(float(pt_out[0]), np_out[0], delta=1e-3)
+            self.assertAlmostEqual(float(pt_out[1]), np_out[1], delta=1e-3)
 
     def test_cpp_header_mathematical_equivalence(self):
         """

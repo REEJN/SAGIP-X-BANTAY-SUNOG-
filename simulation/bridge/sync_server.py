@@ -134,6 +134,7 @@ async def handle_ws(websocket):
         async for message in websocket:
             try:
                 data = json.loads(message)
+                sync_mode = data.get("sync_mode", "")
                 # -------------------------------------------------------------
                 # Process Virtual Camera Frame with BANTAY-SUNOG Detection Model
                 # -------------------------------------------------------------
