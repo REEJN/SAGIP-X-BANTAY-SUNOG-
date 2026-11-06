@@ -269,6 +269,14 @@ static inline void nav_model_predict_from_sensors(
     float fl_right = 0.0f;
     nav_model_predict(in, &fl_left, &fl_right);
 
+    // Anti-stall obstacle overtake guard: if path blocked and policy stalled without fire, overtake!
+    if (!has_fire && dist_front_m < 0.65f && fabsf(fl_left) < 50.0f && fabsf(fl_right) < 50.0f) {{
+        bool turn_right = (dist_right_m >= dist_left_m);
+        float inner = (dist_front_m < 0.40f) ? -20.0f : 40.0f;
+        fl_left = turn_right ? 150.0f : inner;
+        fl_right = turn_right ? inner : 150.0f;
+    }}
+
     // 3. Cast to integer PWM
     *out_left_pwm = (int16_t)roundf(fl_left);
     *out_right_pwm = (int16_t)roundf(fl_right);
@@ -445,7 +453,18 @@ class NavModelRunner {{
     // Heading rate [-3, +3] -> [-1, 1]
     norm[6] = Math.max(-1.0, Math.min(1.0, (headingRateRadS || 0.0) / this.maxYawRate));
 
-    const [leftPwm, rightPwm] = this.predict(norm);
+    let [leftPwm, rightPwm] = this.predict(norm);
+
+    // Obstacle overtaking & stall-prevention guard:
+    // If path in front is blocked and policy predicts low/stopped PWM without a fire target,
+    // actively steer into the clearer side to overtake the obstacle!
+    if (!hasFireTarget && distFrontM < 0.65 && Math.abs(leftPwm) < 50 && Math.abs(rightPwm) < 50) {{
+      const turnRight = (distRightM >= distLeftM);
+      const inner = (distFrontM < 0.40) ? -20 : 40;
+      leftPwm = turnRight ? 150 : inner;
+      rightPwm = turnRight ? inner : 150;
+    }}
+
     return {{ leftPwm, rightPwm }};
   }}
 }}

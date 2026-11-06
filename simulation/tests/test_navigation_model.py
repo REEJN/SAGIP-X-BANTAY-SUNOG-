@@ -187,6 +187,45 @@ class TestNavigationModel(unittest.TestCase):
         close_speed = (abs(close_l) + abs(close_r)) / 2.0
         self.assertLess(close_speed, far_speed * 0.3, "Policy must decelerate heavily at standoff distance")
 
+    def test_obstacle_overtaking_and_clear_path_selection(self):
+        """Verify that when obstacles are detected, policy does NOT stall and selects clear path with overtaking momentum."""
+        # 1. Wall straight ahead, sides open: must maintain non-zero overtaking forward momentum
+        l_sym, r_sym = self.numpy_runner.step(
+            dist_front_m=0.35,
+            dist_left_m=2.0,
+            dist_right_m=2.0,
+            target_rel_yaw_rad=0.0,
+            target_dist_m=5.0,
+            has_fire=False,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(abs(l_sym) + abs(r_sym), 80.0, "Policy must not stall or freeze in front of a wall")
+        self.assertGreater((l_sym + r_sym) / 2.0, 0.0, "Must maintain positive forward progress to overtake obstacle")
+
+        # 2. Obstacle in front and on left: right path is clearer -> steer right
+        l_right, r_right = self.numpy_runner.step(
+            dist_front_m=0.35,
+            dist_left_m=0.4,
+            dist_right_m=2.0,
+            target_rel_yaw_rad=0.0,
+            target_dist_m=5.0,
+            has_fire=False,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(l_right, r_right, "Should steer right (left_pwm > right_pwm) when right path is clearer")
+
+        # 3. Obstacle in front and on right: left path is clearer -> steer left
+        l_left, r_left = self.numpy_runner.step(
+            dist_front_m=0.35,
+            dist_left_m=2.0,
+            dist_right_m=0.4,
+            target_rel_yaw_rad=0.0,
+            target_dist_m=5.0,
+            has_fire=False,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(r_left, l_left, "Should steer left (right_pwm > left_pwm) when left path is clearer")
+
 
 if __name__ == "__main__":
     unittest.main()

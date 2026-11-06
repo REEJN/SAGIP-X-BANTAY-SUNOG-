@@ -97,4 +97,13 @@ class NavPolicyRunner:
             has_fire_target=1.0 if has_fire else 0.0,
             heading_rate=heading_rate_rads
         )
-        return self.predict(norm)
+        left_pwm, right_pwm = self.predict(norm)
+
+        # Anti-stall obstacle overtake guard: if path blocked and policy stalled without fire, overtake!
+        if not has_fire and dist_front_m < 0.65 and abs(left_pwm) < 50 and abs(right_pwm) < 50:
+            turn_right = (dist_right_m >= dist_left_m)
+            inner = -20.0 if dist_front_m < 0.40 else 40.0
+            left_pwm = 150.0 if turn_right else inner
+            right_pwm = inner if turn_right else 150.0
+
+        return left_pwm, right_pwm

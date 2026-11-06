@@ -84,37 +84,40 @@ class BantayNavRLEnv:
         if collision:
             reward -= 60.0
 
-        # 2. PROXIMITY PENALTY & FORWARD DRIVE RESTRICTION:
-        if df < 0.55:
-            # Heavy penalty if attempting to drive forward when front is blocked
+        # 2. PROXIMITY PENALTY & ACTIVE OVERTAKING REWARDS:
+        if df < 0.25:
+            # Dangerous dead-end: punish driving forward
             avg_fwd = (left_pwm + right_pwm) / 2.0
-            if avg_fwd > 20:
+            if avg_fwd > 0:
                 reward -= 45.0 * (avg_fwd / 255.0)
 
-            # Bonus for pivoting in place
-            if (left_pwm * right_pwm) < 0:
-                reward += 20.0
-            reward -= 30.0 * ((0.55 - df) / 0.55)
+        if df < 0.65:
+            turn_differential = abs(left_pwm - right_pwm)
+            # Active Overtake Bonus: reward steering away into the clearer path while maintaining movement
+            if dl > dr and right_pwm > left_pwm and right_pwm > 60:
+                reward += 20.0 * (turn_differential / 255.0)  # Overtaking left
+            elif dr > dl and left_pwm > right_pwm and left_pwm > 60:
+                reward += 20.0 * (turn_differential / 255.0)  # Overtaking right
+            elif abs(dl - dr) <= 0.08 and turn_differential > 60:
+                reward += 15.0 * (turn_differential / 255.0)  # Decisive symmetry-breaking curve
 
         if dl < 0.35:
             reward -= 15.0 * ((0.35 - dl) / 0.35)
         if dr < 0.35:
             reward -= 15.0 * ((0.35 - dr) / 0.35)
 
-        # 3. SAFE OBSTACLE EVASION BONUS: Reward turning away when front is blocked
-        if df < 0.65:
-            turn_differential = abs(left_pwm - right_pwm)
-            # If front is blocked, reward steering away towards the more open side
-            if dl > dr and right_pwm > left_pwm:
-                reward += 8.0 * (turn_differential / 255.0)  # Turning left toward open space
-            elif dr > dl and left_pwm > right_pwm:
-                reward += 8.0 * (turn_differential / 255.0)  # Turning right toward open space
+        # 3. ANTI-STALL PENALTY: Heavily punish freezing/stopping when not at fire standoff!
+        if not has_fire or dist_fire > 0.55:
+            if abs(left_pwm) < 35.0 and abs(right_pwm) < 35.0:
+                reward -= 35.0  # Zero-movement freeze penalty!
+            if abs(self.sim.current_linear_speed) < 0.04 and abs(self.sim.current_angular_speed) < 0.15:
+                reward -= 25.0  # Stationary robot penalty!
 
-        # 4. CRUISING EXPLORATION BONUS (When path is clear)
+        # 4. CRUISING EXPLORATION & ROOM SWEEP BONUS (When path is clear)
         if df >= 0.70 and dl >= 0.40 and dr >= 0.40:
             avg_fwd = (left_pwm + right_pwm) / 2.0
             if avg_fwd > 50:
-                reward += 1.5 * (avg_fwd / 255.0)
+                reward += 2.5 * (avg_fwd / 255.0)
 
         # 5. FIRE HOMING & SUPPRESSION POINTS
         done = False

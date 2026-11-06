@@ -41,71 +41,80 @@ class ExpertPolicy:
         # 1. Fire Homing & Standoff Suppression
         # ---------------------------------------------------------------------
         if has_fire:
-            # 1a. Standoff Deceleration at 45-50cm
+            # 1a. Standoff Deceleration at 45-50cm (Only time the robot stops!)
             if dist_fire <= 0.48 or df <= 0.44:
-                # Target reached! Hold position for extinguishing spray
                 return 0.0, 0.0
 
-            # 1b. Obstacle directly in path to fire: evade first!
-            if df < 0.55:
-                turn_power = 135.0
-                return (-turn_power, turn_power) if dl >= dr else (turn_power, -turn_power)
+            # 1b. Obstacle in path to fire: overtake toward clearer side while keeping fire bias
+            if df < 0.60:
+                if dl > dr + 0.08:
+                    return 35.0, 150.0   # Overtake left
+                elif dr > dl + 0.08:
+                    return 150.0, 35.0   # Overtake right
+                else:
+                    return (150.0, 35.0) if rel_yaw >= 0 else (35.0, 150.0)
 
-            # 1c. Large heading error: pivot in place to face fire before charging
-            if abs(rel_yaw) > 0.35:
-                turn_power = 125.0
-                return (turn_power, -turn_power) if rel_yaw > 0 else (-turn_power, turn_power)
-
-            # 1d. Well-aligned with fire: approach with smooth deceleration as fire nears
+            # 1c. Fire alignment: steer toward flame
             dist_factor = float(np.clip((dist_fire - 0.48) / 1.0, 0.0, 1.0))
             fwd_speed = self.approach_speed * (dist_factor ** 1.2)
-            yaw_steer = rel_yaw * 110.0
+            yaw_steer = rel_yaw * 115.0
             left_pwm = fwd_speed + yaw_steer
             right_pwm = fwd_speed - yaw_steer
             return float(np.clip(left_pwm, -255.0, 255.0)), float(np.clip(right_pwm, -255.0, 255.0))
 
         # ---------------------------------------------------------------------
-        # 2. Dynamic Obstacle Avoidance & Wall Repulsion
+        # 2. Dynamic Obstacle Avoidance & Active Overtaking (Never Stall/Stop!)
         # ---------------------------------------------------------------------
-        # Close obstacle in front (< 0.55m): PIVOT IN PLACE away from obstacle (zero forward drive!)
-        if df < 0.55:
-            urgency = (0.55 - df) / 0.55  # 0 to 1
-            turn_power = 125.0 + 30.0 * urgency
+        # Extreme close dead-end (< 0.22m): reverse backout curve to open space
+        if df < 0.22:
             if dl >= dr:
-                # More room on left -> pivot left in place (left negative, right positive)
-                return -turn_power, turn_power
+                return -80.0, -140.0  # Reverse curve right
             else:
-                # More room on right -> pivot right in place (left positive, right negative)
-                return turn_power, -turn_power
+                return -140.0, -80.0  # Reverse curve left
 
-        # Moderate proximity (0.55m to 0.85m): decelerate forward speed and steer away
-        if df < 0.85:
-            urgency = (0.85 - df) / 0.30  # 0 to 1
-            fwd = self.base_speed * (1.0 - urgency)  # drops to 0 at 0.55m!
-            steer = 130.0 * urgency
-            if dl >= dr:
-                # Steer left
-                left_pwm = fwd - steer
-                right_pwm = fwd + steer
+        # Obstacle ahead (< 0.70m): execute active overtaking curve into clearer path
+        if df < 0.70:
+            clearance_diff = dr - dl  # > 0 -> right is clearer, < 0 -> left is clearer
+            
+            # Determine clear side decisively
+            if clearance_diff > 0.08:
+                turn_right = True
+            elif clearance_diff < -0.08:
+                turn_right = False
             else:
-                # Steer right
-                left_pwm = fwd + steer
-                right_pwm = fwd - steer
-            return float(np.clip(left_pwm, -255.0, 255.0)), float(np.clip(right_pwm, -255.0, 255.0))
+                # Symmetric clearance (e.g. wall straight ahead, both sides clear or equal)
+                # Break symmetry deterministically using angular momentum or consistent right-hand rule
+                if heading_rate > 0.10:
+                    turn_right = True
+                elif heading_rate < -0.10:
+                    turn_right = False
+                else:
+                    turn_right = True  # Deterministic default: right-hand sweep
 
-        # Side corridor pinch:
+            # Urgency-based inner wheel speed:
+            # At df = 0.65m: inner wheel = 65 PWM (gentle overtake curve)
+            # At df = 0.35m: inner wheel = -10 PWM (tight overtake curve)
+            urgency = (0.70 - df) / 0.48  # 0.0 to ~1.0
+            inner_pwm = float(np.clip(70.0 - 90.0 * urgency, -40.0, 80.0))
+            outer_pwm = 150.0
+
+            if turn_right:
+                return outer_pwm, inner_pwm
+            else:
+                return inner_pwm, outer_pwm
+
+        # ---------------------------------------------------------------------
+        # 3. Side Corridor Proximity Nudge
+        # ---------------------------------------------------------------------
         side_steer = 0.0
         if dl < 0.45:
-            # Obstacle on left -> push right (left_pwm > right_pwm)
-            side_steer += (0.45 - dl) * 160.0
+            side_steer += (0.45 - dl) * 150.0
         if dr < 0.45:
-            # Obstacle on right -> push left (right_pwm > left_pwm)
-            side_steer -= (0.45 - dr) * 160.0
+            side_steer -= (0.45 - dr) * 150.0
 
         # ---------------------------------------------------------------------
-        # 3. Systematic Room Sweep Patrol (Curving Search)
+        # 4. Continuous Systematic Room Sweep Scanning Patrol
         # ---------------------------------------------------------------------
-        # Smooth gentle undulation while patrolling to scan wide horizontal swath
         self.sweep_phase += 0.08
         sweep_trim = math.sin(self.sweep_phase) * 25.0
 

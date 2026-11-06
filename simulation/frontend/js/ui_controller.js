@@ -468,8 +468,25 @@ class UIController {
       this.robot.solenoidActive = false;
       this.robotState = hasFire ? 'APPROACHING' : 'SEARCHING';
 
-      // Forward pass through Neural Local Navigation Model
-      const { leftPwm, rightPwm } = this.navModel.step(
+      // 1. Stuck / Stall Detection (ensures robot never stops in front of an obstacle)
+      this.posCheckTimer += dt;
+      if (this.posCheckTimer >= 0.25) {
+        this.posCheckTimer = 0;
+        const dx = this.robot.position.x - this.prevPosX;
+        const dz = this.robot.position.z - this.prevPosZ;
+        const moved = Math.hypot(dx, dz);
+
+        if (moved < 0.005) {
+          this.stuckTimer += 0.25;
+        } else {
+          this.stuckTimer = 0;
+        }
+        this.prevPosX = this.robot.position.x;
+        this.prevPosZ = this.robot.position.z;
+      }
+
+      // 2. Forward pass through Neural Local Navigation Model
+      let { leftPwm, rightPwm } = this.navModel.step(
         distF,
         distL,
         distR,
@@ -478,6 +495,35 @@ class UIController {
         hasFire,
         headingRate
       );
+
+      // 3. Active Obstacle Overtaking & Clear-Path Selection:
+      // If front sensor detects an obstacle/wall, ensure the robot executes an overtaking arc!
+      if (!hasFire && distF < 0.65) {
+        // Choose the clearer path
+        let turnRight = (distR >= distL);
+        if (Math.abs(distR - distL) <= 0.08) {
+          // Symmetric clearance: maintain consistent turn bias to avoid hesitation
+          turnRight = (this.overtakeBias !== undefined) ? (this.overtakeBias > 0) : true;
+        }
+        this.overtakeBias = turnRight ? 1 : -1;
+
+        // If policy outputs near-zero or stalled speeds, enforce active overtaking curve
+        if (Math.abs(leftPwm) < 60 && Math.abs(rightPwm) < 60) {
+          const inner = (distF < 0.38) ? -20 : 40;
+          leftPwm = turnRight ? 150 : inner;
+          rightPwm = turnRight ? inner : 150;
+        }
+      } else if (distF >= 0.70) {
+        this.overtakeBias = undefined;
+      }
+
+      // 4. Force recovery burst if stalled in front of an obstacle for > 0.4s
+      if (!hasFire && this.stuckTimer >= 0.40) {
+        this.stuckTimer = 0;
+        const turnRight = (distR >= distL);
+        leftPwm = turnRight ? 160 : -40;
+        rightPwm = turnRight ? -40 : 160;
+      }
 
       this.robot.setMotorPwm(leftPwm, rightPwm);
     }
