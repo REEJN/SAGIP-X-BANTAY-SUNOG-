@@ -1,10 +1,18 @@
 """
 BANTAY-SUNOG Synthetic Dataset Recorder
-Generates optimal state-action pairs (sensor_inputs, target_pwm) across:
-1. Systematic room sweep patrol
-2. Dynamic continuous obstacle avoidance
-3. Visual servoing homing toward fire targets
-4. Standoff deceleration at 45-50cm extinguishing distance
+Applies the verified Rule-Based SIL (Software-in-the-Loop) FSM directly
+as the Expert Teacher to distill its full intelligence into the TinyML neural model.
+
+Behaviors distilled:
+1. SEARCHING: Structured Zigzag scanning pattern with yaw-based 90-degree lane shifts
+2. OBSTACLE_AVOID: 4-phase escalating recovery:
+   - BACKOUT: Reverse out when df < 0.18m
+   - PIVOT: Yaw-based pivot toward more open side
+   - WALL_FOLLOW: Forward arcing curve (140/110 PWM) away from obstacle to overtake it
+   - ESCAPE: Reverse + large pivot if stuck
+3. ALIGNING: Visual Servoing centering normalized flame target
+4. APPROACHING: Standoff approach at speed 135 with centering trim
+5. EXTINGUISHING: Standstill suppression (0, 0) at 45-50cm standoff
 """
 
 import math
@@ -16,139 +24,340 @@ from simulation.ai_nav.arena_sim import ArenaSim
 from simulation.ai_nav.model import normalize_inputs
 
 
-class ExpertPolicy:
+class RuleBasedSilExpert:
     """
-    Expert supervisor that computes optimal continuous (left_pwm, right_pwm)
-    for any given arena state.
+    Python clone of the Rule-Based SIL FSM from simulation/frontend/js/ui_controller.js.
+    Acts as the expert teacher for behavioral cloning into TinyMLNavPolicy.
     """
     def __init__(self):
-        self.sweep_phase = 0.0
-        self.sweep_dir = 1.0
-        self.base_speed = 145.0
-        self.approach_speed = 140.0
-        self.turn_speed = 135.0
+        self.reset()
 
-    def compute_action(self, sensors: Dict[str, float]) -> Tuple[float, float]:
+    def reset(self):
+        self.robot_state = "SEARCHING"
+        self.state_timer = 0.0
+        self.phase_timer = 0.0
+
+        # Structured Zigzag Scanning Pattern
+        self.scan_phase = "SWEEP"       # 'SWEEP', 'TURN_90_OUT', 'SHIFT_LANE', 'TURN_90_IN'
+        self.scan_direction = 1.0       # +1 right, -1 left
+        self.target_yaw = 0.0
+        self.turn_tolerance = 0.08      # ~4.5 deg
+
+        # Multi-behavior Obstacle Avoidance
+        self.avoid_phase = "NONE"       # 'NONE', 'BACKOUT', 'PIVOT', 'WALL_FOLLOW', 'ESCAPE'
+        self.avoid_timer = 0.0
+        self.avoid_turn_left = True
+        self.avoid_max_timer = 0.0
+        self.avoid_attempts = 0
+
+        # Stuck detection
+        self.prev_x = 0.0
+        self.prev_z = 0.0
+        self.stuck_timer = 0.0
+        self.pos_check_timer = 0.0
+        self.stuck_threshold = 1.5
+
+        # Last motor PWM
+        self.last_left_pwm = 0.0
+        self.last_right_pwm = 0.0
+
+    def _normalize_angle(self, angle: float) -> float:
+        while angle > math.pi:
+            angle -= 2.0 * math.pi
+        while angle < -math.pi:
+            angle += 2.0 * math.pi
+        return angle
+
+    def compute_action(
+        self,
+        sensors: Dict[str, float],
+        robot_x: float = 0.0,
+        robot_z: float = 0.0,
+        robot_yaw: float = 0.0,
+        dt: float = 0.05
+    ) -> Tuple[float, float]:
+        self.state_timer += dt
+        self.phase_timer += dt
+
         df = sensors["dist_front"]
         dl = sensors["dist_left"]
         dr = sensors["dist_right"]
+        has_fire = sensors["has_fire_target"] > 0.5
         rel_yaw = sensors["target_rel_yaw"]
         dist_fire = sensors["target_distance"]
-        has_fire = sensors["has_fire_target"] > 0.5
-        heading_rate = sensors["heading_rate"]
+
+        is_suppression = (self.robot_state in ("EXTINGUISHING", "COOLDOWN"))
 
         # ---------------------------------------------------------------------
-        # 1. Fire Homing & Standoff Suppression
+        # 0. Stuck Detection
         # ---------------------------------------------------------------------
-        if has_fire:
-            # 1a. Standoff Deceleration at 45-50cm (Only time the robot stops!)
-            if dist_fire <= 0.48 or df <= 0.44:
-                return 0.0, 0.0
-
-            # 1b. Obstacle in path to fire: overtake toward clearer side while keeping fire bias
-            if df < 0.60:
-                if dl > dr + 0.08:
-                    return 35.0, 150.0   # Overtake left
-                elif dr > dl + 0.08:
-                    return 150.0, 35.0   # Overtake right
+        if not is_suppression:
+            self.pos_check_timer += dt
+            if self.pos_check_timer >= 0.25:
+                self.pos_check_timer = 0.0
+                moved = math.hypot(robot_x - self.prev_x, robot_z - self.prev_z)
+                if moved < 0.005:
+                    self.stuck_timer += 0.25
                 else:
-                    return (150.0, 35.0) if rel_yaw >= 0 else (35.0, 150.0)
+                    self.stuck_timer = 0.0
+                self.prev_x = robot_x
+                self.prev_z = robot_z
 
-            # 1c. Fire alignment: steer toward flame
-            dist_factor = float(np.clip((dist_fire - 0.48) / 1.0, 0.0, 1.0))
-            fwd_speed = self.approach_speed * (dist_factor ** 1.2)
-            yaw_steer = rel_yaw * 115.0
-            left_pwm = fwd_speed + yaw_steer
-            right_pwm = fwd_speed - yaw_steer
-            return float(np.clip(left_pwm, -255.0, 255.0)), float(np.clip(right_pwm, -255.0, 255.0))
+            if self.stuck_timer >= self.stuck_threshold and self.robot_state != "OBSTACLE_AVOID":
+                self.robot_state = "OBSTACLE_AVOID"
+                self.state_timer = 0.0
+                self.avoid_phase = "ESCAPE"
+                self.avoid_timer = 0.6
+                self.avoid_max_timer = 0.0
+                self.avoid_attempts += 1
+                self.stuck_timer = 0.0
+                self.avoid_turn_left = (random.random() > 0.5)
 
         # ---------------------------------------------------------------------
-        # 2. Dynamic Obstacle Avoidance & Active Overtaking (Never Stall/Stop!)
+        # 1. High-Priority Obstacle Avoidance Trigger (matching runAutonomousSilFsm)
         # ---------------------------------------------------------------------
-        # Extreme close dead-end (< 0.22m): reverse backout curve to open space
-        if df < 0.22:
-            if dl >= dr:
-                return -80.0, -140.0  # Reverse curve right
-            else:
-                return -140.0, -80.0  # Reverse curve left
+        if not is_suppression and self.robot_state != "OBSTACLE_AVOID":
+            is_targeting_fire = (self.robot_state in ("APPROACHING", "ALIGNING")) and has_fire
 
-        # Obstacle ahead (< 0.70m): execute active overtaking curve into clearer path
-        if df < 0.70:
-            clearance_diff = dr - dl  # > 0 -> right is clearer, < 0 -> left is clearer
-            
-            # Determine clear side decisively
-            if clearance_diff > 0.08:
-                turn_right = True
-            elif clearance_diff < -0.08:
-                turn_right = False
+            front_trigger = False
+            side_trigger = False
+
+            is_moving_fwd = (self.last_left_pwm > 50 and self.last_right_pwm > 50)
+            if not is_targeting_fire:
+                # 26-28cm front trigger in SIL
+                front_trigger = (df < 0.28)
+                side_trigger = is_moving_fwd and (dl < 0.14 or dr < 0.14)
             else:
-                # Symmetric clearance (e.g. wall straight ahead, both sides clear or equal)
-                # Break symmetry deterministically using angular momentum or consistent right-hand rule
-                if heading_rate > 0.10:
-                    turn_right = True
-                elif heading_rate < -0.10:
-                    turn_right = False
+                side_trigger = is_moving_fwd and (dl < 0.12 or dr < 0.12)
+
+            if front_trigger or side_trigger:
+                self.robot_state = "OBSTACLE_AVOID"
+                self.state_timer = 0.0
+                self.avoid_max_timer = 0.0
+
+                if df < 0.18:
+                    # Very close: back out first
+                    self.avoid_phase = "BACKOUT"
+                    self.avoid_timer = 0.50
                 else:
-                    turn_right = True  # Deterministic default: right-hand sweep
+                    # Moderate distance: pivot away toward more open side
+                    self.avoid_phase = "PIVOT"
+                    self.avoid_timer = 0.0
+                    turn_angle = (math.pi / 2.0)
+                    if dl >= dr:
+                        self.target_yaw = self._normalize_angle(robot_yaw - turn_angle) # turn left
+                        self.avoid_turn_left = True
+                    else:
+                        self.target_yaw = self._normalize_angle(robot_yaw + turn_angle) # turn right
+                        self.avoid_turn_left = False
 
-            # Urgency-based inner wheel speed:
-            # At df = 0.65m: inner wheel = 65 PWM (gentle overtake curve)
-            # At df = 0.35m: inner wheel = -10 PWM (tight overtake curve)
-            urgency = (0.70 - df) / 0.48  # 0.0 to ~1.0
-            inner_pwm = float(np.clip(70.0 - 90.0 * urgency, -40.0, 80.0))
-            outer_pwm = 150.0
+        # ---------------------------------------------------------------------
+        # 2. FSM Execution
+        # ---------------------------------------------------------------------
+        left_pwm = 0.0
+        right_pwm = 0.0
 
-            if turn_right:
-                return outer_pwm, inner_pwm
+        if self.robot_state == "OBSTACLE_AVOID":
+            self.avoid_max_timer += dt
+            if self.avoid_max_timer > 5.0 and self.avoid_phase != "ESCAPE":
+                self.avoid_phase = "ESCAPE"
+                self.avoid_timer = 0.7
+                self.avoid_turn_left = not self.avoid_turn_left
+
+            if self.avoid_max_timer > 8.0:
+                self.robot_state = "SEARCHING"
+                self.scan_phase = "SWEEP"
+                self.phase_timer = 0.0
+                self.avoid_phase = "NONE"
+                self.avoid_attempts = 0
+                self.stuck_timer = 0.0
+
+            if self.avoid_phase == "BACKOUT":
+                left_pwm = -140.0
+                right_pwm = -140.0
+                self.avoid_timer -= dt
+                if self.avoid_timer <= 0:
+                    self.avoid_phase = "PIVOT"
+                    self.avoid_timer = 0.0
+                    turn_angle = (math.pi / 2.0)
+                    if dl >= dr:
+                        self.target_yaw = self._normalize_angle(robot_yaw - turn_angle)
+                        self.avoid_turn_left = True
+                    else:
+                        self.target_yaw = self._normalize_angle(robot_yaw + turn_angle)
+                        self.avoid_turn_left = False
+
+            elif self.avoid_phase == "PIVOT":
+                yaw_err = self._normalize_angle(self.target_yaw - robot_yaw)
+                if abs(yaw_err) < self.turn_tolerance:
+                    if df > 0.35:
+                        self.robot_state = "SEARCHING"
+                        self.scan_phase = "SWEEP"
+                        self.phase_timer = 0.0
+                        self.avoid_phase = "NONE"
+                        self.avoid_attempts = 0
+                    else:
+                        self.avoid_phase = "WALL_FOLLOW"
+                        self.avoid_timer = 2.0
+                else:
+                    speed = 145.0
+                    if yaw_err > 0:
+                        left_pwm, right_pwm = speed, -speed
+                    else:
+                        left_pwm, right_pwm = -speed, speed
+
+            elif self.avoid_phase == "WALL_FOLLOW":
+                self.avoid_timer -= dt
+                if df < 0.20:
+                    self.avoid_phase = "PIVOT"
+                    turn_angle = (math.pi / 3.0)
+                    if dl >= dr:
+                        self.target_yaw = self._normalize_angle(robot_yaw - turn_angle)
+                    else:
+                        self.target_yaw = self._normalize_angle(robot_yaw + turn_angle)
+                elif self.avoid_timer <= 0 or df > 0.60:
+                    self.robot_state = "SEARCHING"
+                    self.scan_phase = "SWEEP"
+                    self.phase_timer = 0.0
+                    self.avoid_phase = "NONE"
+                    self.avoid_attempts = 0
+                else:
+                    # Drive forward while curving away from obstacle to overtake it!
+                    if dl < dr:
+                        left_pwm, right_pwm = 140.0, 110.0
+                    else:
+                        left_pwm, right_pwm = 110.0, 140.0
+
+            elif self.avoid_phase == "ESCAPE":
+                self.avoid_timer -= dt
+                if self.avoid_timer > 0.35:
+                    left_pwm, right_pwm = -155.0, -155.0
+                elif self.avoid_timer > 0:
+                    speed = 160.0
+                    if self.avoid_turn_left:
+                        left_pwm, right_pwm = -speed, speed
+                    else:
+                        left_pwm, right_pwm = speed, -speed
+                else:
+                    if df > 0.30:
+                        self.robot_state = "SEARCHING"
+                        self.scan_phase = "SWEEP"
+                        self.phase_timer = 0.0
+                        self.avoid_phase = "NONE"
+                        self.avoid_attempts = 0
+                    else:
+                        self.avoid_phase = "ESCAPE"
+                        self.avoid_timer = 0.9
+                        self.avoid_turn_left = not self.avoid_turn_left
+
+        elif self.robot_state in ("SEARCHING", "IDLE"):
+            if has_fire:
+                self.robot_state = "ALIGNING"
+                self.state_timer = 0.0
+                left_pwm, right_pwm = 0.0, 0.0
             else:
-                return inner_pwm, outer_pwm
+                if self.scan_phase == "SWEEP":
+                    left_pwm, right_pwm = 140.0, 140.0
+                    if df < 0.40 or self.phase_timer > 5.0:
+                        self.scan_phase = "TURN_90_OUT"
+                        self.phase_timer = 0.0
+                        self.target_yaw = self._normalize_angle(robot_yaw + self.scan_direction * (math.pi / 2.0))
+                elif self.scan_phase == "TURN_90_OUT":
+                    yaw_err = self._normalize_angle(self.target_yaw - robot_yaw)
+                    if abs(yaw_err) < self.turn_tolerance or self.phase_timer > 3.0:
+                        self.scan_phase = "SHIFT_LANE"
+                        self.phase_timer = 0.0
+                    else:
+                        speed = 135.0
+                        left_pwm = speed if yaw_err > 0 else -speed
+                        right_pwm = -speed if yaw_err > 0 else speed
+                elif self.scan_phase == "SHIFT_LANE":
+                    left_pwm, right_pwm = 135.0, 135.0
+                    if df < 0.30 or self.phase_timer >= 0.80:
+                        self.scan_phase = "TURN_90_IN"
+                        self.phase_timer = 0.0
+                        self.target_yaw = self._normalize_angle(robot_yaw + self.scan_direction * (math.pi / 2.0))
+                elif self.scan_phase == "TURN_90_IN":
+                    yaw_err = self._normalize_angle(self.target_yaw - robot_yaw)
+                    if abs(yaw_err) < self.turn_tolerance or self.phase_timer > 3.0:
+                        self.scan_direction = -self.scan_direction
+                        self.scan_phase = "SWEEP"
+                        self.phase_timer = 0.0
+                    else:
+                        speed = 135.0
+                        left_pwm = speed if yaw_err > 0 else -speed
+                        right_pwm = -speed if yaw_err > 0 else speed
 
-        # ---------------------------------------------------------------------
-        # 3. Side Corridor Proximity Nudge
-        # ---------------------------------------------------------------------
-        side_steer = 0.0
-        if dl < 0.45:
-            side_steer += (0.45 - dl) * 150.0
-        if dr < 0.45:
-            side_steer -= (0.45 - dr) * 150.0
+        elif self.robot_state == "ALIGNING":
+            if not has_fire:
+                if self.state_timer > 2.0:
+                    self.robot_state = "SEARCHING"
+                    self.scan_phase = "SWEEP"
+            else:
+                err_x = rel_yaw / 1.13  # normalize to camera frame error
+                if abs(err_x) > 0.05:
+                    turn_speed = min(150.0, max(90.0, abs(err_x) * 250.0))
+                    if err_x > 0:
+                        left_pwm, right_pwm = turn_speed, -turn_speed
+                    else:
+                        left_pwm, right_pwm = -turn_speed, turn_speed
+                else:
+                    self.robot_state = "APPROACHING"
+                    self.state_timer = 0.0
 
-        # ---------------------------------------------------------------------
-        # 4. Continuous Systematic Room Sweep Scanning Patrol
-        # ---------------------------------------------------------------------
-        self.sweep_phase += 0.08
-        sweep_trim = math.sin(self.sweep_phase) * 25.0
+        elif self.robot_state == "APPROACHING":
+            if not has_fire:
+                if self.state_timer > 2.0:
+                    self.robot_state = "SEARCHING"
+                    self.scan_phase = "SWEEP"
+            else:
+                if dist_fire <= 0.50 or df <= 0.45:
+                    left_pwm, right_pwm = 0.0, 0.0
+                    self.robot_state = "EXTINGUISHING"
+                    self.state_timer = 0.0
+                else:
+                    err_x = rel_yaw / 1.13
+                    trim = err_x * 85.0
+                    speed = 135.0
+                    left_pwm = speed + trim
+                    right_pwm = speed - trim
 
-        fwd = self.base_speed
-        left_pwm = fwd + side_steer + sweep_trim
-        right_pwm = fwd - side_steer - sweep_trim
+        elif self.robot_state == "EXTINGUISHING":
+            left_pwm, right_pwm = 0.0, 0.0
+            if self.state_timer >= 2.0:
+                self.robot_state = "SEARCHING"
+                self.scan_phase = "SWEEP"
+                self.state_timer = 0.0
 
+        self.last_left_pwm = left_pwm
+        self.last_right_pwm = right_pwm
         return float(np.clip(left_pwm, -255.0, 255.0)), float(np.clip(right_pwm, -255.0, 255.0))
+
+
+# Alias for backward compatibility
+ExpertPolicy = RuleBasedSilExpert
 
 
 def generate_synthetic_dataset(
     num_episodes: int = 400,
-    max_steps_per_episode: int = 120,
+    max_steps_per_episode: int = 140,
     target_samples: int = 35000,
     seed: int = 42
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Runs virtual simulation episodes across randomized arena layouts and records
-    optimal state-action pairs.
-    
-    Returns:
-        X: np.ndarray of shape (N, 7) normalized input features
-        Y: np.ndarray of shape (N, 2) target PWM continuous outputs [-255, 255]
+    Runs virtual simulation episodes where the Rule-Based SIL FSM drives the robot,
+    recording high-fidelity state-action pairs to distill the SIL behavior into TinyMLNavPolicy.
     """
     random.seed(seed)
     np.random.seed(seed)
 
     sim = ArenaSim()
-    expert = ExpertPolicy()
+    sil_expert = RuleBasedSilExpert()
 
     inputs_list = []
     actions_list = []
 
-    print(f"[DATASET] Starting synthetic episode generation (target: ~{target_samples} samples)...")
+    print(f"[DATASET] Distilling Rule-Based SIL into dataset (target: ~{target_samples} samples)...")
 
     episode = 0
     total_samples = 0
@@ -157,21 +366,17 @@ def generate_synthetic_dataset(
         episode += 1
 
         # Varied layout scenarios
-        # 60% chance of fire target, 40% systematic room sweep
         has_fire_episode = (random.random() < 0.65)
         num_crates = random.randint(2, 6)
         num_barrels = random.randint(1, 4)
 
         sim.randomize_arena(num_crates=num_crates, num_barrels=num_barrels, add_fire=has_fire_episode)
-
-        # Allow expert policy to steer through episode
-        episode_samples = 0
-        extinguished = False
+        sil_expert.reset()
 
         for step_idx in range(max_steps_per_episode):
             sensors = sim.get_sensor_readings()
 
-            # Record transition
+            # Record input features
             norm_feat = normalize_inputs(
                 dist_front=sensors["dist_front"],
                 dist_left=sensors["dist_left"],
@@ -182,36 +387,40 @@ def generate_synthetic_dataset(
                 heading_rate=sensors["heading_rate"]
             )
 
-            # Compute optimal expert action
-            left_pwm, right_pwm = expert.compute_action(sensors)
+            # Compute Rule-Based SIL action
+            left_pwm, right_pwm = sil_expert.compute_action(
+                sensors,
+                robot_x=sim.x,
+                robot_z=sim.z,
+                robot_yaw=sim.yaw,
+                dt=0.05
+            )
 
-            # Add minor Gaussian exploration noise (3%) for policy robustness
-            noisy_left = left_pwm + random.gauss(0, 3.0)
-            noisy_right = right_pwm + random.gauss(0, 3.0)
+            # Small exploration noise (2%) for robust generalization
+            noisy_left = left_pwm + random.gauss(0, 2.0)
+            noisy_right = right_pwm + random.gauss(0, 2.0)
 
             inputs_list.append(norm_feat)
             actions_list.append([left_pwm, right_pwm])
             total_samples += 1
-            episode_samples += 1
 
             # Step physical simulation
             sim.step(noisy_left, noisy_right, dt=0.05)
 
-            # Check if reached fire standoff distance
-            if sensors["has_fire_target"] > 0.5 and sensors["target_distance"] <= 0.48:
-                # Add a few standoff standstill frames
+            # Check if suppression achieved
+            if sil_expert.robot_state == "EXTINGUISHING":
+                # Record 5 frames of standstill suppression
                 for _ in range(5):
                     inputs_list.append(norm_feat)
                     actions_list.append([0.0, 0.0])
                     total_samples += 1
-                extinguished = True
                 break
 
         if episode % 50 == 0 or total_samples >= target_samples:
             print(f"[DATASET] Episode {episode}: Collected {total_samples} samples so far...")
 
-    # Augment with standoff standstill examples (fire at 0.40m - 0.48m, target action [0, 0])
-    print("[DATASET] Augmenting dataset with fire standoff standstill transitions...")
+    # Augment with fire standoff standstill examples (fire at 0.40m - 0.48m, target action [0, 0])
+    print("[DATASET] Augmenting dataset with Rule-Based SIL standoff suppression transitions...")
     for _ in range(2500):
         df_standoff = random.uniform(0.40, 0.48)
         dl_standoff = random.uniform(0.6, 2.5)
@@ -230,12 +439,13 @@ def generate_synthetic_dataset(
         inputs_list.append(norm_feat)
         actions_list.append([0.0, 0.0])
 
-    # Augment with obstacle avoidance scenarios (various clearances)
-    print("[DATASET] Augmenting dataset with dedicated obstacle avoidance transitions...")
+    # Augment with dedicated obstacle avoidance transitions from Rule-Based SIL
+    print("[DATASET] Augmenting dataset with Rule-Based SIL obstacle avoidance transitions...")
     for _ in range(4000):
-        df_obs = random.uniform(0.20, 0.75)
-        dl_obs = random.uniform(0.20, 3.0)
-        dr_obs = random.uniform(0.20, 3.0)
+        df_obs = random.uniform(0.15, 0.65)
+        dl_obs = random.uniform(0.15, 3.0)
+        dr_obs = random.uniform(0.15, 3.0)
+        heading = random.uniform(-1.0, 1.0)
         norm_feat = normalize_inputs(
             dist_front=df_obs,
             dist_left=dl_obs,
@@ -243,22 +453,26 @@ def generate_synthetic_dataset(
             target_rel_yaw=0.0,
             target_distance=5.0,
             has_fire_target=0.0,
-            heading_rate=0.0
+            heading_rate=heading
         )
-        lp, rp = expert.compute_action({
+        # Query SIL avoidance directly
+        dummy_expert = RuleBasedSilExpert()
+        dummy_expert.robot_state = "OBSTACLE_AVOID"
+        dummy_expert.avoid_phase = "WALL_FOLLOW" if df_obs > 0.25 else "BACKOUT"
+        lp, rp = dummy_expert.compute_action({
             "dist_front": df_obs,
             "dist_left": dl_obs,
             "dist_right": dr_obs,
             "target_rel_yaw": 0.0,
             "target_distance": 5.0,
             "has_fire_target": 0.0,
-            "heading_rate": 0.0
+            "heading_rate": heading
         })
         inputs_list.append(norm_feat)
         actions_list.append([lp, rp])
 
     # Augment with visual fire homing at varied angles
-    print("[DATASET] Augmenting dataset with visual servoing fire homing transitions...")
+    print("[DATASET] Augmenting dataset with Rule-Based SIL visual servoing transitions...")
     for _ in range(4000):
         df_fire = random.uniform(0.8, 3.0)
         dl_fire = random.uniform(0.8, 3.0)
@@ -274,7 +488,9 @@ def generate_synthetic_dataset(
             has_fire_target=1.0,
             heading_rate=0.0
         )
-        lp, rp = expert.compute_action({
+        dummy_expert = RuleBasedSilExpert()
+        dummy_expert.robot_state = "ALIGNING" if abs(rel_yaw) > 0.15 else "APPROACHING"
+        lp, rp = dummy_expert.compute_action({
             "dist_front": df_fire,
             "dist_left": dl_fire,
             "dist_right": dr_fire,
@@ -289,11 +505,12 @@ def generate_synthetic_dataset(
     X = np.array(inputs_list, dtype=np.float32)
     Y = np.array(actions_list, dtype=np.float32)
 
-    print(f"[DATASET] Successfully generated {len(X)} state-action transitions!")
+    print(f"[DATASET] Successfully distilled {len(X)} Rule-Based SIL state-action transitions!")
     return X, Y
 
 
 if __name__ == "__main__":
-    X, Y = generate_synthetic_dataset(target_samples=35000)
-    np.savez_compressed("simulation/ai_nav/nav_dataset.npz", X=X, Y=Y)
-    print("Dataset saved to simulation/ai_nav/nav_dataset.npz")
+    X, Y = generate_synthetic_dataset(num_episodes=450, target_samples=35000, seed=42)
+    output_path = "simulation/ai_nav/nav_dataset.npz"
+    np.savez_compressed(output_path, X=X, Y=Y)
+    print(f"Dataset saved to {output_path}")
