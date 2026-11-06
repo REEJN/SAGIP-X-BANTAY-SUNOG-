@@ -127,8 +127,8 @@ class SensorSimulator {
 
     const sensorConfigs = [
       { key: 'front', mount: this.robot.ultrasonicMounts.front, angleOffset: 0 },
-      { key: 'left', mount: this.robot.ultrasonicMounts.left, angleOffset: Math.PI / 4 },
-      { key: 'right', mount: this.robot.ultrasonicMounts.right, angleOffset: -Math.PI / 4 }
+      { key: 'left', mount: this.robot.ultrasonicMounts.left, angleOffset: -Math.PI / 4 },
+      { key: 'right', mount: this.robot.ultrasonicMounts.right, angleOffset: Math.PI / 4 }
     ];
 
     sensorConfigs.forEach((cfg) => {

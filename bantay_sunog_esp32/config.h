@@ -110,3 +110,9 @@
 #define TARGET_LOSS_TIMEOUT_MS      2500     // Revert to SEARCHING if no message for 2.5s
 #define TELEMETRY_SEND_INTERVAL_MS  200      // Transmit robot status back to Pi every 200ms
 #define SENSOR_READ_INTERVAL_MS     60       // Read ultrasonic sensors round-robin every 60ms
+
+// -----------------------------------------------------------------------------
+// 7. TinyML Neural Local Navigation Model
+// -----------------------------------------------------------------------------
+#define USE_TINYML_NAV              true     // Enable continuous TinyML neural navigation policy
+

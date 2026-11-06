@@ -1,0 +1,192 @@
+"""
+BANTAY-SUNOG Automated Unit Tests: TinyML Local Navigation Model
+Verifies:
+1. Architecture, layers, and parameter count (~818 params, < 4 KB).
+2. Numerical equivalence of PyTorch reference model, NumPy runner, and C++ header.
+3. Functional navigation behaviors (obstacle evasion, fire homing, standoff deceleration).
+"""
+
+import math
+import os
+import re
+import unittest
+import numpy as np
+import torch
+
+from simulation.ai_nav.model import TinyMLNavPolicy, normalize_inputs
+from simulation.ai_nav.nav_policy import NavPolicyRunner
+
+
+class TestNavigationModel(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.pt_model_path = "simulation/models/navigation_model.pt"
+        cls.json_model_path = "simulation/models/navigation_model.json"
+        cls.cpp_header_path = "bantay_sunog_esp32/navigation_model.h"
+
+        cls.model = TinyMLNavPolicy()
+        if os.path.exists(cls.pt_model_path):
+            cls.traced_model = torch.jit.load(cls.pt_model_path)
+        else:
+            cls.traced_model = None
+
+        if os.path.exists(cls.json_model_path):
+            cls.numpy_runner = NavPolicyRunner(cls.json_model_path)
+        else:
+            cls.numpy_runner = None
+
+    def test_parameter_count_and_footprint(self):
+        """Verify model parameter count is ~818 and memory footprint < 4 KB."""
+        param_count = self.model.get_parameter_count()
+        # fc1: 7*32 + 32 = 256
+        # fc2: 32*16 + 16 = 528
+        # fc3: 16*2 + 2 = 34
+        # Total = 818
+        self.assertEqual(param_count, 818, f"Expected 818 parameters, got {param_count}")
+        footprint_bytes = param_count * 4  # float32 = 4 bytes
+        self.assertLess(footprint_bytes, 4096, f"Model footprint ({footprint_bytes} bytes) exceeds 4 KB limit")
+
+    def test_normalization_bounds(self):
+        """Verify that normalize_inputs maps arbitrary physical values to [-1.0, 1.0]."""
+        # Normal scenario
+        norm = normalize_inputs(1.5, 2.0, 0.8, 0.5, 2.0, 1.0, 0.2)
+        self.assertEqual(len(norm), 7)
+        self.assertTrue(np.all(norm >= -1.0))
+        self.assertTrue(np.all(norm <= 1.0))
+
+        # Extreme / out of bounds scenario
+        extreme = normalize_inputs(-5.0, 10.0, 0.0, 4.0 * math.pi, 20.0, 0.0, -10.0)
+        self.assertEqual(len(extreme), 7)
+        self.assertTrue(np.all(extreme >= -1.0))
+        self.assertTrue(np.all(extreme <= 1.0))
+
+    def test_numpy_vs_pytorch_inference(self):
+        """Verify NumPy inference matches PyTorch TorchScript within float tolerance."""
+        if self.traced_model is None or self.numpy_runner is None:
+            self.skipTest("Saved models not found")
+
+        np.random.seed(123)
+        for _ in range(50):
+            sample_in = np.random.uniform(-1.0, 1.0, size=(7,)).astype(np.float32)
+
+            # PyTorch inference
+            with torch.no_grad():
+                tensor_in = torch.tensor(sample_in).unsqueeze(0)
+                pt_out = self.traced_model(tensor_in).squeeze(0).numpy()
+
+            # NumPy inference
+            np_out = self.numpy_runner.predict(sample_in)
+
+            # Max absolute error must be < 1e-4
+            self.assertAlmostEqual(float(pt_out[0]), np_out[0], places=4)
+            self.assertAlmostEqual(float(pt_out[1]), np_out[1], places=4)
+
+    def test_cpp_header_mathematical_equivalence(self):
+        """
+        Extract weights and equations directly from bantay_sunog_esp32/navigation_model.h
+        and verify that the C++ forward pass reproduces PyTorch reference output within < 1e-4.
+        """
+        self.assertTrue(os.path.exists(self.cpp_header_path), f"Header not found: {self.cpp_header_path}")
+
+        with open(self.cpp_header_path, "r", encoding="utf-8") as f:
+            header_text = f.read()
+
+        # Parse W1, B1, W2, B2, W3, B3 using regex
+        def parse_2d(name, rows, cols):
+            pattern = rf"static const float {name}\[{rows}\]\[{cols}\] = \{{(.*?)\}};"
+            match = re.search(pattern, header_text, re.DOTALL)
+            self.assertIsNotNone(match, f"Could not find {name} in {self.cpp_header_path}")
+            # Find all float values
+            floats = [float(x.rstrip("f")) for x in re.findall(r"[-+]?\d*\.\d+f", match.group(1))]
+            self.assertEqual(len(floats), rows * cols, f"Mismatch in {name} float count")
+            return np.array(floats, dtype=np.float32).reshape(rows, cols)
+
+        def parse_1d(name, size):
+            pattern = rf"static const float {name}\[{size}\] = \{{(.*?)\}};"
+            match = re.search(pattern, header_text, re.DOTALL)
+            self.assertIsNotNone(match, f"Could not find {name} in {self.cpp_header_path}")
+            floats = [float(x.rstrip("f")) for x in re.findall(r"[-+]?\d*\.\d+f", match.group(1))]
+            self.assertEqual(len(floats), size, f"Mismatch in {name} float count")
+            return np.array(floats, dtype=np.float32)
+
+        w1 = parse_2d("NAV_W1", 32, 7)
+        b1 = parse_1d("NAV_B1", 32)
+        w2 = parse_2d("NAV_W2", 16, 32)
+        b2 = parse_1d("NAV_B2", 16)
+        w3 = parse_2d("NAV_W3", 2, 16)
+        b3 = parse_1d("NAV_B3", 2)
+
+        # Simulate C++ nav_model_predict logic
+        def cpp_nav_model_predict(input_vec):
+            h1 = np.maximum(0.0, np.dot(w1, input_vec) + b1)
+            h2 = np.maximum(0.0, np.dot(w2, h1) + b2)
+            out = np.dot(w3, h2) + b3
+            return np.clip(out, -255.0, 255.0)
+
+        # Compare against Python runner across 100 test inputs
+        np.random.seed(456)
+        for _ in range(100):
+            test_x = np.random.uniform(-1.0, 1.0, size=(7,)).astype(np.float32)
+            cpp_out = cpp_nav_model_predict(test_x)
+            py_out = self.numpy_runner.predict(test_x)
+
+            np.testing.assert_allclose(cpp_out, py_out, atol=1e-4, err_msg="C++ header logic deviates from model")
+
+    def test_fire_servoing_turn_direction(self):
+        """Verify that when fire is on the right, policy steers right (left_pwm > right_pwm)."""
+        # Fire is at +30 degrees (target_rel_yaw = +0.52 rad)
+        # Clear path ahead (front, left, right = 2.5m)
+        left_pwm, right_pwm = self.numpy_runner.step(
+            dist_front_m=2.5,
+            dist_left_m=2.5,
+            dist_right_m=2.5,
+            target_rel_yaw_rad=0.52,
+            target_dist_m=2.0,
+            has_fire=True,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(left_pwm, right_pwm, "Should steer right (left_pwm > right_pwm) toward right-side fire")
+
+        # Fire is at -30 degrees (target_rel_yaw = -0.52 rad)
+        left_pwm, right_pwm = self.numpy_runner.step(
+            dist_front_m=2.5,
+            dist_left_m=2.5,
+            dist_right_m=2.5,
+            target_rel_yaw_rad=-0.52,
+            target_dist_m=2.0,
+            has_fire=True,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(right_pwm, left_pwm, "Should steer left (right_pwm > left_pwm) toward left-side fire")
+
+    def test_standoff_deceleration_at_suppression_distance(self):
+        """Verify that as robot reaches 0.45m - 0.48m from fire, speed drops significantly."""
+        # Far from fire (2.0m)
+        far_l, far_r = self.numpy_runner.step(
+            dist_front_m=2.0,
+            dist_left_m=2.0,
+            dist_right_m=2.0,
+            target_rel_yaw_rad=0.0,
+            target_dist_m=2.0,
+            has_fire=True,
+            heading_rate_rads=0.0
+        )
+
+        # At standoff distance (0.47m)
+        close_l, close_r = self.numpy_runner.step(
+            dist_front_m=0.47,
+            dist_left_m=2.0,
+            dist_right_m=2.0,
+            target_rel_yaw_rad=0.0,
+            target_dist_m=0.47,
+            has_fire=True,
+            heading_rate_rads=0.0
+        )
+
+        far_speed = (abs(far_l) + abs(far_r)) / 2.0
+        close_speed = (abs(close_l) + abs(close_r)) / 2.0
+        self.assertLess(close_speed, far_speed * 0.3, "Policy must decelerate heavily at standoff distance")
+
+
+if __name__ == "__main__":
+    unittest.main()

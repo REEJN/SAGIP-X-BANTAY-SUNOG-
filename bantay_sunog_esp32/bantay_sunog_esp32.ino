@@ -6,6 +6,7 @@
 #include "sensor_manager.h"
 #include "telemetry_parser.h"
 #include "telemetry_reporter.h"
+#include "navigation_model.h"
 
 // Subsystem instances
 static MotorController motorCtrl;
@@ -275,6 +276,20 @@ void loop() {
                 break;
             }
 
+            // TinyML Neural Navigation Policy vs Legacy Rule-Based FSM
+            #if USE_TINYML_NAV
+            int16_t pwm_l = 0;
+            int16_t pwm_r = 0;
+            nav_model_predict_from_sensors(
+                sensorMgr.getFrontDistance() / 100.0f,
+                sensorMgr.getLeftDistance() / 100.0f,
+                sensorMgr.getRightDistance() / 100.0f,
+                0.0f, 5.0f, false, 0.0f,
+                &pwm_l, &pwm_r
+            );
+            motorCtrl.setRawMotors(pwm_l, pwm_r);
+            servoCtrl.updateSearchSweep();
+            #else
             // Obstacle Avoidance Navigation
             if (sensorMgr.isFrontBlocked()) {
                 // Front obstacle detected! Decide which way to turn
@@ -298,6 +313,7 @@ void loop() {
                 motorCtrl.forward(SPEED_SEARCH_ROAM);
                 servoCtrl.updateSearchSweep();
             }
+            #endif
             break;
         }
 

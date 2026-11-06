@@ -86,10 +86,17 @@
         <span class="panel-subtitle">Hardware Link</span>
       </div>
       <div class="sync-mode-selector">
-        <div class="mode-radio selected" data-mode="sil">
+        <div class="mode-radio selected" data-mode="neural">
           <div class="mode-info">
-            <span class="mode-name">🤖 Autonomous (SIL Emulation)</span>
-            <span class="mode-desc">Full autonomous room search, target align, approach, and spray logic</span>
+            <span class="mode-name">🧠 Neural TinyML SIL (Continuous Policy)</span>
+            <span class="mode-desc">Smooth continuous obstacle avoidance & fire homing via MLP navigation model</span>
+          </div>
+        </div>
+
+        <div class="mode-radio" data-mode="sil">
+          <div class="mode-info">
+            <span class="mode-name">🤖 Rule-Based SIL (Legacy FSM)</span>
+            <span class="mode-desc">Discrete state machine sweep, pivot turns, and timeout recovery</span>
           </div>
         </div>
 
@@ -231,6 +238,7 @@
   <script src="js/robot_model.js"></script>
   <script src="js/sensor_simulator.js"></script>
   <script src="js/asset_loader.js"></script>
+  <script src="js/nav_model_runner.js"></script>
   <script src="js/sim_world.js"></script>
   <script src="js/ui_controller.js"></script>
   <script>

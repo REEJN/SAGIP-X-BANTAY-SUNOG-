@@ -13,8 +13,9 @@ class UIController {
     this.obstacleManager = simWorld.obstacleManager;
     this.assetLoader = simWorld.assetLoader;
 
-    // Modes: 'sil' (Autonomous simulation), 'teleop' (Manual WASD), 'sim2hw', 'hw2sim'
-    this.syncMode = 'sil';
+    // Modes: 'neural' (TinyML navigation policy), 'sil' (Legacy Rule-Based FSM), 'teleop' (Manual WASD), 'sim2hw', 'hw2sim'
+    this.syncMode = 'neural';
+    this.navModel = (typeof NavModelRunner !== 'undefined') ? new NavModelRunner() : null;
 
     // Simulated FSM State (matches bantay_sunog_esp32 types.h)
     this.robotState = 'SEARCHING';
@@ -354,6 +355,8 @@ class UIController {
 
     if (this.syncMode === 'teleop') {
       this.handleTeleopControls();
+    } else if (this.syncMode === 'neural') {
+      this.runNeuralSilNavigation(dt, telem);
     } else if (this.syncMode === 'sil') {
       this.runAutonomousSilFsm(dt, telem);
     } else if (this.syncMode === 'sim2hw') {
@@ -404,6 +407,80 @@ class UIController {
     // Solenoid spray
     this.robot.solenoidActive = this.activeKeys.has('KeyF');
     this.robotState = this.robot.solenoidActive ? 'EXTINGUISHING' : (left || right ? 'MANUAL_TEST' : 'IDLE');
+  }
+
+  /**
+   * Neural Local Navigation Policy (TinyML Sensor Policy)
+   * Evaluates MLP local navigation model on continuous 7-input sensor space
+   * for smooth obstacle avoidance, room sweep, and fire interception.
+   */
+  runNeuralSilNavigation(dt, telem) {
+    if (!this.navModel && typeof NavModelRunner !== 'undefined') {
+      this.navModel = new NavModelRunner();
+    }
+    if (!this.navModel) return;
+
+    this.stateTimer += dt;
+    const target = this.realVisionTarget || telem.target;
+    const hasFire = !!(telem.flame_detected || (target && target.confidence > 0.4));
+
+    // Convert cm to meters
+    const distF = (telem.dist_front || 300.0) / 100.0;
+    const distL = (telem.dist_left || 300.0) / 100.0;
+    const distR = (telem.dist_right || 300.0) / 100.0;
+
+    let targetRelYaw = 0.0;
+    let targetDist = 5.0;
+
+    if (hasFire && target) {
+      // In camera normalized space (x in [0, 1], center is 0.5)
+      // Camera FOV ~ 65 deg (1.13 rad), errX in [-0.5, 0.5] -> yaw error in [-0.56, +0.56] rad
+      targetRelYaw = (target.x - 0.50) * 1.13;
+      targetDist = (target.distanceCm && target.distanceCm > 0) ? (target.distanceCm / 100.0) : distF;
+
+      // Turret vertical tilt servo centering
+      const errY = target.y - 0.50;
+      if (Math.abs(errY) > 0.04) {
+        const tiltStep = errY > 0 ? -0.8 : 0.8;
+        this.robot.setTiltAngle(this.robot.tiltAngleDeg + tiltStep);
+      }
+    } else {
+      // Sweep tilt servo when searching
+      this.turretSweepTimer += dt;
+      const sweepAngle = 90.0 + Math.sin(this.turretSweepTimer * 1.5) * 20.0;
+      this.robot.setTiltAngle(sweepAngle);
+    }
+
+    const headingRate = this.robot.currentAngularSpeed || 0.0;
+
+    // Check standoff suppression zone (45 - 50 cm)
+    if (hasFire && (targetDist <= 0.50 || distF <= 0.46)) {
+      this.robotState = 'EXTINGUISHING';
+      this.robot.setMotorPwm(0, 0);
+      this.robot.solenoidActive = true;
+
+      if (this.stateTimer >= 2.0 && (!telem.flame_detected || this.stateTimer >= 4.0)) {
+        this.robot.solenoidActive = false;
+        this.robotState = 'SEARCHING';
+        this.stateTimer = 0;
+      }
+    } else {
+      this.robot.solenoidActive = false;
+      this.robotState = hasFire ? 'APPROACHING' : 'SEARCHING';
+
+      // Forward pass through Neural Local Navigation Model
+      const { leftPwm, rightPwm } = this.navModel.step(
+        distF,
+        distL,
+        distR,
+        targetRelYaw,
+        targetDist,
+        hasFire,
+        headingRate
+      );
+
+      this.robot.setMotorPwm(leftPwm, rightPwm);
+    }
   }
 
   /**
