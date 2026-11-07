@@ -124,21 +124,21 @@ class RuleBasedSilExpert:
 
             is_moving_fwd = (self.last_left_pwm > 50 and self.last_right_pwm > 50)
             if not is_targeting_fire:
-                # 26-28cm front trigger in SIL
-                front_trigger = (df < 0.28)
-                side_trigger = is_moving_fwd and (dl < 0.14 or dr < 0.14)
-            else:
+                # 10.0-inch front trigger (~0.254m) in SIL
+                front_trigger = (df < 0.254)
                 side_trigger = is_moving_fwd and (dl < 0.12 or dr < 0.12)
+            else:
+                side_trigger = is_moving_fwd and (dl < 0.10 or dr < 0.10)
 
             if front_trigger or side_trigger:
                 self.robot_state = "OBSTACLE_AVOID"
                 self.state_timer = 0.0
                 self.avoid_max_timer = 0.0
 
-                if df < 0.18:
-                    # Very close: back out first
+                if df < 0.152:
+                    # 6.0-inch emergency backout
                     self.avoid_phase = "BACKOUT"
-                    self.avoid_timer = 0.50
+                    self.avoid_timer = 0.45
                 else:
                     # Moderate distance: pivot away toward more open side
                     self.avoid_phase = "PIVOT"
@@ -625,6 +625,47 @@ def generate_synthetic_dataset(
         else:
             # Proportional gentle convergence trim
             trim = waypoint_yaw * 70.0
+            lp = float(np.clip(base_speed + trim, -255.0, 255.0))
+            rp = float(np.clip(base_speed - trim, -255.0, 255.0))
+
+        inputs_list.append(norm_feat)
+        actions_list.append([lp, rp])
+
+    # 7. Augment with Map-Conditioned Frontier Exploration & Undiscovered Area Navigation (12,000 samples)
+    print("[DATASET] Augmenting dataset with map-conditioned frontier exploration transitions...")
+    for _ in range(12000):
+        # 10-inch tight collision avoidance limits (0.254m)
+        df_front = random.uniform(0.12, 3.0)
+        dl_side = random.uniform(0.15, 2.5)
+        dr_side = random.uniform(0.15, 2.5)
+        frontier_yaw = random.uniform(-1.5, 1.5)
+        frontier_dist = random.uniform(0.5, 5.0)
+        has_fire = 0.0 # Exploring undiscovered space
+        heading = random.uniform(-0.4, 0.4)
+
+        norm_feat = normalize_inputs(
+            dist_front=df_front,
+            dist_left=dl_side,
+            dist_right=dr_side,
+            target_rel_yaw=frontier_yaw,
+            target_distance=frontier_dist,
+            has_fire_target=has_fire,
+            heading_rate=heading
+        )
+
+        # Expert Action:
+        # If obstacle is within 10 inches (0.254m), perform tight avoidance
+        if df_front < 0.254:
+            if df_front < 0.152: # 6 inches emergency backout
+                lp, rp = -140.0, -140.0
+            else: # 6-10 inches: steer toward clearer flank
+                turn_right = (dr_side >= dl_side)
+                lp = 160.0 if turn_right else 30.0
+                rp = 30.0 if turn_right else 160.0
+        else:
+            # Clear corridor (>10 inches): steer along frontier_yaw into undiscovered area
+            base_speed = 145.0
+            trim = np.clip(frontier_yaw * 80.0, -90.0, 90.0)
             lp = float(np.clip(base_speed + trim, -255.0, 255.0))
             rp = float(np.clip(base_speed - trim, -255.0, 255.0))
 

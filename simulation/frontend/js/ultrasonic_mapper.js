@@ -328,6 +328,14 @@ class CirculationDetector {
   }
 }
 
+// Physical inch-to-meter constants & tight navigation collision distances
+const INCH_TO_M = 0.0254;
+const M_TO_INCH = 1.0 / INCH_TO_M;
+const COLLISION_TRIGGER_INCHES = 10.0;     // ~0.254m / 25.4cm (obstacle avoidance trigger)
+const COLLISION_CLEAR_INCHES = 14.0;       // ~0.356m / 35.6cm (hysteresis clear threshold)
+const COLLISION_EMERGENCY_INCHES = 6.0;    // ~0.152m / 15.2cm (emergency backout)
+const CORRIDOR_HALF_WIDTH_INCHES = 5.5;    // ~0.140m / 14.0cm (allows 0.8m doorway transit)
+
 class UltrasonicMapper {
   constructor(canvasId = 'map-canvas') {
     this.canvas = document.getElementById(canvasId);
@@ -389,30 +397,33 @@ class UltrasonicMapper {
    * @returns {Object} { type: 'CLEAR'|'OBSTACLE'|'WALL', spanX: number, flankClearSide: 'LEFT'|'RIGHT' }
    */
   classifyObject(localObstacles, mF, mL, mR) {
-    if (mF >= 1.05 && mL >= 0.85 && mR >= 0.85) {
+    const triggerM = COLLISION_TRIGGER_INCHES * INCH_TO_M; // ~0.254m (10 inches)
+    const clearM = COLLISION_CLEAR_INCHES * INCH_TO_M;     // ~0.356m (14 inches)
+
+    if (mF >= clearM && mL >= triggerM && mR >= triggerM) {
       return { type: 'CLEAR', spanX: 0, flankClearSide: (mR >= mL) ? 'RIGHT' : 'LEFT' };
     }
 
-    // Filter obstacles located in the forward approach zone (Z in [0.05, 1.35m], |X| < 2.0m)
-    const forwardObs = localObstacles.filter(o => o.z > 0.05 && o.z < 1.35 && Math.abs(o.x) < 2.0);
+    // Filter obstacles located in the forward approach zone (Z in [0.04, 0.85m], |X| < 1.6m)
+    const forwardObs = localObstacles.filter(o => o.z > 0.04 && o.z < 0.85 && Math.abs(o.x) < 1.6);
     let spanX = 0;
     if (forwardObs.length > 1) {
       const xs = forwardObs.map(o => o.x);
       spanX = Math.max(...xs) - Math.min(...xs);
     } else if (forwardObs.length === 1) {
-      spanX = 0.40;
+      spanX = 0.35;
     }
 
     const flankClearSide = (mR >= mL) ? 'RIGHT' : 'LEFT';
-    const isFlankClear = (mL > 1.10 || mR > 1.10);
+    const isFlankClear = (mL > 0.45 || mR > 0.45);
     const flankRatio = Math.abs(mL - mR) / Math.max(0.1, Math.max(mL, mR));
 
-    // Discrete Obstacle (Crate / Barrel): Narrow lateral span (<0.85m) and open flank
-    if (spanX < 0.85 && (isFlankClear || flankRatio > 0.35)) {
+    // Discrete Obstacle (Crate / Barrel): Narrow lateral span (<0.65m) and open flank
+    if (spanX < 0.65 && (isFlankClear || flankRatio > 0.28)) {
       return { type: 'OBSTACLE', spanX, flankClearSide };
     }
 
-    // Continuous surface, wide span (>=1.0m), or tightly constrained corridor => WALL
+    // Continuous surface, wide span, or tightly constrained corridor => WALL
     return { type: 'WALL', spanX, flankClearSide };
   }
 
@@ -447,10 +458,47 @@ class UltrasonicMapper {
         const dz = p.worldZ - robotPos.z;
         const lx = dx * cosY - dz * sinY; // Lateral (+X = right, -X = left)
         const lz = dx * sinY + dz * cosY; // Longitudinal (+Z = forward)
-        if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.2) {
+        if (lz > 0.04 && lz < 2.8 && Math.abs(lx) < 2.0) {
           localObstacles.push({ x: lx, z: lz, weight: 1.0 });
         }
       });
+    }
+
+    // 1.5 Add persistent exploration grid occupied cells to local obstacles
+    // Adapts path prediction to all previously mapped walls, rooms, and partitions
+    if (robotPos && this.explorationGrid) {
+      const grid = this.explorationGrid;
+      const res = grid.resolution;
+      const searchRadiusM = 3.2;
+      const minX = Math.max(-grid.arenaRadius, robotPos.x - searchRadiusM);
+      const maxX = Math.min(grid.arenaRadius, robotPos.x + searchRadiusM);
+      const minZ = Math.max(-grid.arenaRadius, robotPos.z - searchRadiusM);
+      const maxZ = Math.min(grid.arenaRadius, robotPos.z + searchRadiusM);
+
+      const iMin = Math.max(0, Math.floor((minX + grid.arenaRadius) / res));
+      const iMax = Math.min(grid.gridDim - 1, Math.floor((maxX + grid.arenaRadius) / res));
+      const jMin = Math.max(0, Math.floor((minZ + grid.arenaRadius) / res));
+      const jMax = Math.min(grid.gridDim - 1, Math.floor((maxZ + grid.arenaRadius) / res));
+
+      for (let j = jMin; j <= jMax; j++) {
+        for (let i = iMin; i <= iMax; i++) {
+          const idx = j * grid.gridDim + i;
+          if (grid.cells[idx] === 2) { // 2 = OCCUPIED
+            const wx = (i + 0.5) * res - grid.arenaRadius;
+            const wz = (j + 0.5) * res - grid.arenaRadius;
+            const dx = wx - robotPos.x;
+            const dz = wz - robotPos.z;
+            const dist = Math.hypot(dx, dz);
+            if (dist > 0.05 && dist <= searchRadiusM) {
+              const lx = dx * cosY - dz * sinY;
+              const lz = dx * sinY + dz * cosY;
+              if (lz > 0.04 && lz < 2.8 && Math.abs(lx) < 2.0) {
+                localObstacles.push({ x: lx, z: lz, weight: 2.0 });
+              }
+            }
+          }
+        }
+      }
     }
 
     // 2. Add direct ultrasonic beam hits for immediate proximity protection
@@ -516,23 +564,26 @@ class UltrasonicMapper {
     }
 
     // 3. Check if forward collision corridor is blocked (with Schmitt-trigger hysteresis)
-    const forwardCorridorHalfW = 0.28;
+    // TIGHT INCH-BASED CORRIDOR: 5.5 inches half-width (11" total), 10" trigger distance
+    const forwardCorridorHalfW = CORRIDOR_HALF_WIDTH_INCHES * INCH_TO_M; // ~0.140m (5.5 in)
+    const collisionTriggerM = COLLISION_TRIGGER_INCHES * INCH_TO_M;     // ~0.254m (10.0 in)
+    const collisionClearM = COLLISION_CLEAR_INCHES * INCH_TO_M;         // ~0.356m (14.0 in)
     let minForwardDist = mF;
 
     for (const obs of localObstacles) {
-      if (obs.z > 0.08 && Math.abs(obs.x) < forwardCorridorHalfW) {
+      if (obs.z > 0.04 && Math.abs(obs.x) < forwardCorridorHalfW) {
         if (obs.z < minForwardDist) minForwardDist = obs.z;
       }
     }
 
     // Schmitt-trigger hysteresis:
-    // Turn ON obstacle avoidance at < 0.85m; Turn OFF ONLY when path ahead is clear > 1.15m!
+    // Turn ON obstacle avoidance at < 10.0 inches (0.254m); Turn OFF ONLY when path ahead is clear > 14.0 inches (0.356m)!
     if (!this.isObstacleAheadState) {
-      if (minForwardDist < 0.85) {
+      if (minForwardDist < collisionTriggerM) {
         this.isObstacleAheadState = true;
       }
     } else {
-      if (minForwardDist > 1.15) {
+      if (minForwardDist > collisionClearM) {
         this.isObstacleAheadState = false;
       }
     }
@@ -690,9 +741,9 @@ class UltrasonicMapper {
       }
 
       const reachedEnd = this.latchedWaypointIdx >= this.latchedWorldPath.length - 1;
-      const corridorClear = (this.clearCorridorFrames > 25 && elapsed > 800);
+      const corridorClear = (this.clearCorridorFrames > 15 && elapsed > 600);
       const timedOut = (elapsed > 4500);
-      const blockedAhead = (minForwardDist < 0.25);
+      const blockedAhead = (minForwardDist < COLLISION_EMERGENCY_INCHES * INCH_TO_M);
 
       if (reachedEnd || corridorClear || timedOut || blockedAhead) {
         this.latchedWorldPath = null;
@@ -701,7 +752,7 @@ class UltrasonicMapper {
     }
 
     if (!this.latchedWorldPath) {
-      if (classification.type === 'WALL' && minForwardDist < 0.75) {
+      if (classification.type === 'WALL' && minForwardDist < collisionTriggerM + 0.05) {
         // Wall Encountered: Generate 90deg lane-turn arc into adjacent sweep lane
         let turnSign = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
         if (Math.abs(desiredGoalAngle) > 0.25) {
@@ -730,7 +781,7 @@ class UltrasonicMapper {
         worldPath.push({ x: robotPos.x, z: robotPos.z });
         localPath.push({ x: 0, y: 0 });
 
-        const pathLength = 1.6;
+        const pathLength = 1.4;
         const numWaypoints = 10;
         for (let i = 1; i <= numWaypoints; i++) {
           const frac = i / numWaypoints;
@@ -759,26 +810,54 @@ class UltrasonicMapper {
         this.latchedTimestamp = now;
         isPathLatched = true;
       } else if (robotPos) {
-        // Clear cruise: Straight-line lane sweep path
+        // Map-Adapted Cruise & Frontier Exploration Path (Adapts directly to mapped environment)
         localPath.push({ x: 0, y: 0 });
         worldPath.push({ x: robotPos.x, z: robotPos.z });
 
-        const targetWorldBearing = (isFireActive && target && target.x !== undefined)
-          ? robotYaw + (target.x - 0.50) * 1.13
-          : robotYaw;
+        let targetWorldBearing = robotYaw;
+        if (isFireActive && target && target.x !== undefined) {
+          targetWorldBearing = robotYaw + (target.x - 0.50) * 1.13;
+        } else if (goalPos) {
+          // Orient path toward undiscovered frontier goal from the map!
+          const dx = goalPos.x - robotPos.x;
+          const dz = goalPos.z - robotPos.z;
+          targetWorldBearing = Math.atan2(dx, dz);
+        }
+
+        let bearingDiff = targetWorldBearing - robotYaw;
+        while (bearingDiff > Math.PI) bearingDiff -= Math.PI * 2;
+        while (bearingDiff < -Math.PI) bearingDiff += Math.PI * 2;
+        bearingDiff = Math.max(-1.25, Math.min(1.25, bearingDiff));
 
         const cruiseLength = 1.8;
         const numWaypoints = 10;
         for (let i = 1; i <= numWaypoints; i++) {
-          const s = (i / numWaypoints) * cruiseLength;
-          const wx = robotPos.x + Math.sin(targetWorldBearing) * s;
-          const wz = robotPos.z + Math.cos(targetWorldBearing) * s;
-          worldPath.push({ x: wx, z: wz });
+          const frac = i / numWaypoints;
+          const s = frac * cruiseLength;
+          // Smooth curved trajectory adapting to mapped frontier heading
+          const blendedAngle = bearingDiff * (frac * 0.70);
+          let lx = Math.sin(blendedAngle) * s;
+          let lz = Math.cos(blendedAngle) * s;
 
-          const dx = wx - robotPos.x;
-          const dz = wz - robotPos.z;
-          const lx = dx * cosY - dz * sinY;
-          const lz = dx * sinY + dz * cosY;
+          let wx = robotPos.x + lx * cosY + lz * sinY;
+          let wz = robotPos.z - lx * sinY + lz * cosY;
+
+          // Check against ExplorationGrid: if waypoint is inside an occupied mapped cell, deflect away
+          if (this.explorationGrid) {
+            const gi = Math.floor((wx + this.explorationGrid.arenaRadius) / this.explorationGrid.resolution);
+            const gj = Math.floor((wz + this.explorationGrid.arenaRadius) / this.explorationGrid.resolution);
+            if (gi >= 0 && gi < this.explorationGrid.gridDim && gj >= 0 && gj < this.explorationGrid.gridDim) {
+              if (this.explorationGrid.cells[gj * this.explorationGrid.gridDim + gi] === 2) {
+                const deflectSign = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+                wx += Math.cos(robotYaw) * 0.25 * deflectSign;
+                wz += -Math.sin(robotYaw) * 0.25 * deflectSign;
+                lx = (wx - robotPos.x) * cosY - (wz - robotPos.z) * sinY;
+                lz = (wx - robotPos.x) * sinY + (wz - robotPos.z) * cosY;
+              }
+            }
+          }
+
+          worldPath.push({ x: wx, z: wz });
           localPath.push({ x: lx, y: lz });
         }
       }
@@ -1430,51 +1509,58 @@ class UltrasonicMapper {
     ctx.textAlign = 'left';
 
     const getDistColor = (cm) => {
-      if (cm < 50) return '#ef4444';
-      if (cm < 90) return '#f59e0b';
+      const inVal = cm * 0.393701;
+      if (inVal < COLLISION_EMERGENCY_INCHES) return '#ef4444';
+      if (inVal < COLLISION_TRIGGER_INCHES) return '#f59e0b';
       return '#00f0ff';
     };
 
+    const toIn = (cm) => `${Math.round(cm * 0.393701)}"`;
+
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText('L:', 6, 12);
+    ctx.fillText('L:', 4, 12);
     ctx.fillStyle = getDistColor(distL);
-    ctx.fillText(`${Math.round(distL)}cm`, 18, 12);
+    ctx.fillText(`${toIn(distL)}`, 16, 12);
 
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText('F:', 85, 12);
+    ctx.fillText('F:', 46, 12);
     ctx.fillStyle = getDistColor(distF);
-    ctx.fillText(`${Math.round(distF)}cm`, 97, 12);
+    ctx.fillText(`${toIn(distF)}`, 58, 12);
 
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText('R:', 140, 12);
+    ctx.fillText('R:', 88, 12);
     ctx.fillStyle = getDistColor(distR);
-    ctx.fillText(`${Math.round(distR)}cm`, 152, 12);
+    ctx.fillText(`${toIn(distR)}`, 100, 12);
+
+    // Collision limit badge in inches
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillText(`COL:10"`, 134, 12);
 
     // Map Coverage Percentage
     const cov = this.explorationGrid.getCoveragePercentage();
     ctx.fillStyle = '#38bdf8';
-    ctx.fillText(`MAP:${cov}%`, 198, 12);
+    ctx.fillText(`MAP:${cov}%`, 182, 12);
 
     // State badge on top right
     ctx.textAlign = 'right';
     if (isSpraying || robotState === 'EXTINGUISHING') {
       ctx.fillStyle = '#ef4444';
-      ctx.fillText('EXTINGUISH', width - 6, 12);
+      ctx.fillText('EXTINGUISH', width - 4, 12);
     } else if (this.circulationDetector.isCirculating) {
       ctx.fillStyle = '#f59e0b';
-      ctx.fillText('⚠️ LOOP ESCAPE', width - 6, 12);
+      ctx.fillText('⚠️ LOOP ESCAPE', width - 4, 12);
     } else if (avoidance && avoidance.isObstacleAhead) {
       ctx.fillStyle = '#10b981';
-      ctx.fillText(avoidance.pathStatus.replace('AVOID ', 'BYPASS '), width - 6, 12);
+      ctx.fillText(avoidance.pathStatus.replace('AVOID ', 'BYPASS '), width - 4, 12);
     } else if (hasFire) {
       ctx.fillStyle = '#f59e0b';
-      ctx.fillText('FIRE LOCK', width - 6, 12);
+      ctx.fillText('FIRE LOCK', width - 4, 12);
     } else if (this.currentFrontierGoal) {
       ctx.fillStyle = '#00f0ff';
-      ctx.fillText('FRONTIER', width - 6, 12);
+      ctx.fillText('FRONTIER', width - 4, 12);
     } else {
       ctx.fillStyle = '#00f0ff';
-      ctx.fillText('PATH: CLEAR', width - 6, 12);
+      ctx.fillText('CLEAR', width - 4, 12);
     }
 
     return avoidance;

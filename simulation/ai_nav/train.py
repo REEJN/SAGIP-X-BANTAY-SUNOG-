@@ -444,11 +444,11 @@ class NavModelRunner {{
     let [leftPwm, rightPwm] = this.predict(norm);
 
     // Obstacle overtaking & stall-prevention guard:
-    // If path in front is blocked and policy predicts low/stopped PWM without a fire target,
+    // If path in front is blocked (<11 inches / 0.28m) and policy predicts low/stopped PWM without a fire target,
     // actively steer into the clearer side to overtake the obstacle!
-    if (!hasFireTarget && distFrontM < 0.65 && Math.abs(leftPwm) < 50 && Math.abs(rightPwm) < 50) {{
+    if (!hasFireTarget && distFrontM < 0.28 && Math.abs(leftPwm) < 50 && Math.abs(rightPwm) < 50) {{
       const turnRight = (Math.abs(targetRelYawRad || 0) > 0.05) ? (targetRelYawRad > 0.05) : (distRightM >= distLeftM);
-      const inner = (distFrontM < 0.40) ? -20 : 40;
+      const inner = (distFrontM < 0.16) ? -20 : 40;
       leftPwm = turnRight ? 150 : inner;
       rightPwm = turnRight ? inner : 150;
     }}

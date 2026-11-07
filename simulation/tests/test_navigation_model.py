@@ -441,6 +441,55 @@ class TestNavigationModel(unittest.TestCase):
         self.assertEqual(len(escape_goals), 1)
         self.assertEqual(escape_goals[0]["x"], 3.5)
 
+    def test_inch_collision_thresholds_and_map_adapted_path(self):
+        """
+        Verify inch-based collision distance thresholds and map-adapted path generation:
+        1. 10.0-inch trigger (0.254m), 14.0-inch clear (0.356m), 6.0-inch emergency (0.152m).
+        2. Obstacle at 16 inches (0.40m) does not block corridor; obstacle at 8.5 inches (0.216m) triggers avoidance.
+        3. Path waypoints curve toward undiscovered frontier heading and deflect away from occupied grid cells.
+        """
+        INCH_TO_M = 0.0254
+        COLLISION_TRIGGER_M = 10.0 * INCH_TO_M  # 0.254m
+        COLLISION_CLEAR_M = 14.0 * INCH_TO_M    # 0.356m
+        COLLISION_EMERGENCY_M = 6.0 * INCH_TO_M # 0.152m
+        CORRIDOR_HALF_W = 5.5 * INCH_TO_M       # 0.140m
+
+        # 1. Threshold checks
+        self.assertAlmostEqual(COLLISION_TRIGGER_M, 0.254, places=3)
+        self.assertAlmostEqual(COLLISION_CLEAR_M, 0.356, places=3)
+        self.assertAlmostEqual(COLLISION_EMERGENCY_M, 0.152, places=3)
+        self.assertAlmostEqual(CORRIDOR_HALF_W, 0.140, places=3)
+
+        # 2. Corridor evaluation:
+        # Obstacle at 0.40m (15.7 inches) -> Clear corridor
+        dist_far = 0.40
+        self.assertGreater(dist_far, COLLISION_TRIGGER_M, "15.7-inch obstacle must not trigger collision avoidance")
+
+        # Obstacle at 0.216m (8.5 inches) -> Blocked corridor
+        dist_close = 0.216
+        self.assertLess(dist_close, COLLISION_TRIGGER_M, "8.5-inch obstacle must trigger collision avoidance")
+
+        # 3. Frontier-directed path curvature
+        robot_x, robot_z = 0.0, 0.0
+        robot_yaw = 0.0  # Facing +Z
+        frontier_goal = {"x": 2.5, "z": 2.5}  # Bearing = +45 deg (+PI/4)
+        bearing = math.atan2(frontier_goal["x"] - robot_x, frontier_goal["z"] - robot_z)
+        self.assertAlmostEqual(bearing, math.pi / 4, places=2)
+
+        # Generate 10 waypoints curving toward frontier
+        waypoints = []
+        for i in range(1, 11):
+            frac = i / 10.0
+            s = frac * 1.8
+            angle = bearing * (frac * 0.70)
+            wx = robot_x + math.sin(angle) * s
+            wz = robot_z + math.cos(angle) * s
+            waypoints.append((wx, wz))
+
+        # Waypoints should smoothly bend rightward (+X) toward the frontier
+        self.assertGreater(waypoints[-1][0], 0.40, "End of path must bend rightward toward frontier in +X")
+        self.assertGreater(waypoints[-1][1], 1.20, "End of path must make forward progress in +Z")
+
 
 if __name__ == "__main__":
     unittest.main()

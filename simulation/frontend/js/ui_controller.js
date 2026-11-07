@@ -834,7 +834,8 @@ class UIController {
         : { type: 'CLEAR', flankClearSide: (distR >= distL ? 'RIGHT' : 'LEFT') };
 
       // Wall detection: triggers 90deg lane-turn arc into adjacent sweep lane
-      if (classification.type === 'WALL' && (distF < 0.68 || telem.dist_front < 68.0)) {
+      // Uses 10-11 inch collision trigger (~0.28m / 28cm) instead of old 27-inch trigger
+      if (classification.type === 'WALL' && (distF < 0.28 || telem.dist_front < 28.0)) {
         if (this.scanPhase === 'SWEEP') {
           this.scanPhase = 'TURN_90_OUT';
           this.phaseTimer = 0;
@@ -879,19 +880,30 @@ class UIController {
               this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
               this.robot.setMotorPwm(0, 0);
             } else {
-              // Cruising along sweep corridor towards frontier
-              const targetYawBias = (avoidance && avoidance.frontierGoal) ? avoidance.clearAngle : 0.0;
+              // Cruising along sweep corridor adapting directly to mapped undiscovered frontier
+              let targetYawBias = 0.0;
+              let targetDistM = 5.0;
+              if (avoidance && avoidance.frontierGoal) {
+                const dx = avoidance.frontierGoal.x - this.robot.position.x;
+                const dz = avoidance.frontierGoal.z - this.robot.position.z;
+                const goalBearing = Math.atan2(dx, dz);
+                targetYawBias = this._normalizeAngle(goalBearing - this.robot.yaw);
+                targetDistM = Math.hypot(dx, dz);
+              } else if (avoidance) {
+                targetYawBias = avoidance.clearAngle;
+              }
+
               let { leftPwm, rightPwm } = this.navModel.step(
                 distF,
                 distL,
                 distR,
                 targetYawBias,
-                5.0,
+                targetDistM,
                 false,
                 headingRate
               );
-              leftPwm = Math.round(leftPwm * 0.35 + 140 * 0.65);
-              rightPwm = Math.round(rightPwm * 0.35 + 140 * 0.65);
+              leftPwm = Math.round(leftPwm * 0.45 + 140 * 0.55);
+              rightPwm = Math.round(rightPwm * 0.45 + 140 * 0.55);
               this.robot.setMotorPwm(leftPwm, rightPwm);
             }
           }
@@ -915,9 +927,9 @@ class UIController {
         }
 
         case 'SHIFT_LANE':
-          // Drive forward lane width spacing (~0.50m)
+          // Drive forward lane width spacing (~0.45m)
           this.robot.setMotorPwm(135, 135);
-          if (distF < 0.40 || this.phaseTimer >= 0.85) {
+          if (distF < 0.22 || this.phaseTimer >= 0.85) {
             this.scanPhase = 'TURN_90_IN';
             this.phaseTimer = 0;
             this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
