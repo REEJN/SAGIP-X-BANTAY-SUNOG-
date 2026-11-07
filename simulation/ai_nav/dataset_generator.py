@@ -257,8 +257,21 @@ class RuleBasedSilExpert:
                 left_pwm, right_pwm = 0.0, 0.0
             else:
                 if self.scan_phase == "SWEEP":
-                    left_pwm, right_pwm = 140.0, 140.0
-                    if df < 0.40 or self.phase_timer > 5.0:
+                    if df < 0.75:
+                        # Smooth predictive obstacle bypass curve based on sector clearance
+                        turn_right = (dr >= dl)
+                        diff = max(0.0, 0.75 - df)
+                        steer_offset = min(110.0, diff * 220.0)
+                        if turn_right:
+                            left_pwm = 155.0
+                            right_pwm = max(45.0, 155.0 - steer_offset)
+                        else:
+                            right_pwm = 155.0
+                            left_pwm = max(45.0, 155.0 - steer_offset)
+                    else:
+                        left_pwm, right_pwm = 140.0, 140.0
+
+                    if df < 0.38 or self.phase_timer > 5.0:
                         self.scan_phase = "TURN_90_OUT"
                         self.phase_timer = 0.0
                         self.target_yaw = self._normalize_angle(robot_yaw + self.scan_direction * (math.pi / 2.0))

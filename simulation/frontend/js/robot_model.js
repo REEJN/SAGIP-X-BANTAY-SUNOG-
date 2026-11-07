@@ -366,14 +366,15 @@ class RobotModel {
     // -------------------------------------------------------------------------
     // 3. Accurate Collision Resolution (OBB Boxes/Walls, Cylinders, Arena)
     // -------------------------------------------------------------------------
-    const robotRadius = 0.18;
+    // Increased collision radius (0.23m) covers chassis corners (0.192m diagonal + 0.035m margins)
+    const robotRadius = 0.23;
     let resolvedX = nextX;
     let resolvedZ = nextZ;
 
     // Helper: Resolve rectangular boundary limits (9.0m x 9.0m arena by default)
     const clampArenaRect = (x, z) => {
-      let boundX = 4.24; // 4.5m half-width - 0.075m wall - 0.18m robot radius
-      let boundZ = 4.24;
+      let boundX = 4.5 - 0.075 - robotRadius; // ~4.195m from center
+      let boundZ = 4.5 - 0.075 - robotRadius;
       if (typeof arenaRadius === 'object' && arenaRadius !== null) {
         boundX = arenaRadius.maxX !== undefined ? arenaRadius.maxX : boundX;
         boundZ = arenaRadius.maxZ !== undefined ? arenaRadius.maxZ : boundZ;
@@ -384,96 +385,99 @@ class RobotModel {
       };
     };
 
-    // Apply rectangular arena wall boundary
-    const clamped = clampArenaRect(resolvedX, resolvedZ);
-    resolvedX = clamped.x;
-    resolvedZ = clamped.z;
+    // 2-pass iterative constraint solver to eliminate corner clipping & multi-contact wedging
+    for (let iter = 0; iter < 2; iter++) {
+      // Apply rectangular arena wall boundary
+      const clamped = clampArenaRect(resolvedX, resolvedZ);
+      resolvedX = clamped.x;
+      resolvedZ = clamped.z;
 
-    // Obstacle collision resolution: exact 2D OBB for boxes/walls, circle for cylinders
-    if (obstacles && obstacles.length > 0) {
-      for (const obs of obstacles) {
-        if (!obs.userData) continue;
-        const oPos = obs.position;
-        const oType = obs.userData.type;
+      // Obstacle collision resolution: exact 2D OBB for boxes/walls, circle for cylinders
+      if (obstacles && obstacles.length > 0) {
+        for (const obs of obstacles) {
+          if (!obs.userData) continue;
+          const oPos = obs.position;
+          const oType = obs.userData.type;
 
-        if (oType === 'cylinder') {
-          // Circle-to-Circle Collision
-          const cRadius = obs.userData.radius || 0.3;
-          const minSep = robotRadius + cRadius;
-          const dx = resolvedX - oPos.x;
-          const dz = resolvedZ - oPos.z;
-          const dist = Math.hypot(dx, dz);
+          if (oType === 'cylinder') {
+            // Circle-to-Circle Collision
+            const cRadius = obs.userData.radius || 0.3;
+            const minSep = robotRadius + cRadius;
+            const dx = resolvedX - oPos.x;
+            const dz = resolvedZ - oPos.z;
+            const dist = Math.hypot(dx, dz);
 
-          if (dist < minSep) {
-            const pushDist = minSep - dist + 0.002;
-            if (dist > 0.001) {
-              resolvedX += (dx / dist) * pushDist;
-              resolvedZ += (dz / dist) * pushDist;
-            } else {
-              resolvedX += pushDist;
-            }
-          }
-        } else if (oType === 'box' || oType === 'wall') {
-          // Exact Oriented Bounding Box (OBB) 2D Collision Resolution
-          const halfW = (obs.userData.width || 0.6) / 2;
-          const halfD = (obs.userData.depth || 0.6) / 2;
-          const rotY = obs.rotation.y || 0;
-
-          // Vector from box center to robot
-          const dx = resolvedX - oPos.x;
-          const dz = resolvedZ - oPos.z;
-
-          // Transform into box local coordinates by rotating by -rotY
-          const cosA = Math.cos(-rotY);
-          const sinA = Math.sin(-rotY);
-          const localX = dx * cosA - dz * sinA;
-          const localZ = dx * sinA + dz * cosA;
-
-          // Find closest point on box in local space
-          const closestX = Math.max(-halfW, Math.min(halfW, localX));
-          const closestZ = Math.max(-halfD, Math.min(halfD, localZ));
-
-          // Distance from local robot center to closest point on box
-          const diffX = localX - closestX;
-          const diffZ = localZ - closestZ;
-          const localDist = Math.hypot(diffX, diffZ);
-
-          if (localDist < robotRadius) {
-            let pushLocalX = 0;
-            let pushLocalZ = 0;
-
-            if (localDist > 0.001) {
-              // Robot center is outside the box: push along closest-point normal
-              const pushDist = robotRadius - localDist + 0.002;
-              pushLocalX = (diffX / localDist) * pushDist;
-              pushLocalZ = (diffZ / localDist) * pushDist;
-            } else {
-              // Robot center is inside the box: push along the shallowest face
-              const penLeft = localX - (-halfW);
-              const penRight = halfW - localX;
-              const penBottom = localZ - (-halfD);
-              const penTop = halfD - localZ;
-              const minPen = Math.min(penLeft, penRight, penBottom, penTop);
-
-              if (minPen === penLeft) {
-                pushLocalX = -(penLeft + robotRadius + 0.002);
-              } else if (minPen === penRight) {
-                pushLocalX = penRight + robotRadius + 0.002;
-              } else if (minPen === penBottom) {
-                pushLocalZ = -(penBottom + robotRadius + 0.002);
+            if (dist < minSep) {
+              const pushDist = minSep - dist + 0.003;
+              if (dist > 0.001) {
+                resolvedX += (dx / dist) * pushDist;
+                resolvedZ += (dz / dist) * pushDist;
               } else {
-                pushLocalZ = penTop + robotRadius + 0.002;
+                resolvedX += pushDist;
               }
             }
+          } else if (oType === 'box' || oType === 'wall') {
+            // Exact Oriented Bounding Box (OBB) 2D Collision Resolution
+            const halfW = (obs.userData.width || 0.6) / 2;
+            const halfD = (obs.userData.depth || 0.6) / 2;
+            const rotY = obs.rotation.y || 0;
 
-            // Transform push vector back into world coordinates by rotating by +rotY
-            const cosB = Math.cos(rotY);
-            const sinB = Math.sin(rotY);
-            const pushWorldX = pushLocalX * cosB - pushLocalZ * sinB;
-            const pushWorldZ = pushLocalX * sinB + pushLocalZ * cosB;
+            // Vector from box center to robot
+            const dx = resolvedX - oPos.x;
+            const dz = resolvedZ - oPos.z;
 
-            resolvedX += pushWorldX;
-            resolvedZ += pushWorldZ;
+            // Transform into box local coordinates by rotating by -rotY
+            const cosA = Math.cos(-rotY);
+            const sinA = Math.sin(-rotY);
+            const localX = dx * cosA - dz * sinA;
+            const localZ = dx * sinA + dz * cosA;
+
+            // Find closest point on box in local space
+            const closestX = Math.max(-halfW, Math.min(halfW, localX));
+            const closestZ = Math.max(-halfD, Math.min(halfD, localZ));
+
+            // Distance from local robot center to closest point on box
+            const diffX = localX - closestX;
+            const diffZ = localZ - closestZ;
+            const localDist = Math.hypot(diffX, diffZ);
+
+            if (localDist < robotRadius) {
+              let pushLocalX = 0;
+              let pushLocalZ = 0;
+
+              if (localDist > 0.001) {
+                // Robot center is outside the box: push along closest-point normal
+                const pushDist = robotRadius - localDist + 0.003;
+                pushLocalX = (diffX / localDist) * pushDist;
+                pushLocalZ = (diffZ / localDist) * pushDist;
+              } else {
+                // Robot center is inside the box: push along the shallowest face
+                const penLeft = localX - (-halfW);
+                const penRight = halfW - localX;
+                const penBottom = localZ - (-halfD);
+                const penTop = halfD - localZ;
+                const minPen = Math.min(penLeft, penRight, penBottom, penTop);
+
+                if (minPen === penLeft) {
+                  pushLocalX = -(penLeft + robotRadius + 0.003);
+                } else if (minPen === penRight) {
+                  pushLocalX = penRight + robotRadius + 0.003;
+                } else if (minPen === penBottom) {
+                  pushLocalZ = -(penBottom + robotRadius + 0.003);
+                } else {
+                  pushLocalZ = penTop + robotRadius + 0.003;
+                }
+              }
+
+              // Transform push vector back into world coordinates by rotating by +rotY
+              const cosB = Math.cos(rotY);
+              const sinB = Math.sin(rotY);
+              const pushWorldX = pushLocalX * cosB - pushLocalZ * sinB;
+              const pushWorldZ = pushLocalX * sinB + pushLocalZ * cosB;
+
+              resolvedX += pushWorldX;
+              resolvedZ += pushWorldZ;
+            }
           }
         }
       }

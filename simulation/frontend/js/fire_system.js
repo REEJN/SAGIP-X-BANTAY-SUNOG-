@@ -35,6 +35,22 @@ class FireEntity {
     this.baseDisc.position.y = 0.01;
     this.group.add(this.baseDisc);
 
+    // Physical collision & raycast hitbox cylinder
+    const hitboxGeo = new THREE.CylinderGeometry(0.25, 0.25, 0.60, 16);
+    const hitboxMat = new THREE.MeshBasicMaterial({
+      visible: false // invisible physics collision mesh
+    });
+    this.hitboxMesh = new THREE.Mesh(hitboxGeo, hitboxMat);
+    this.hitboxMesh.position.set(x, 0.30, z);
+    this.hitboxMesh.userData = {
+      type: 'cylinder',
+      radius: 0.25,
+      height: 0.60,
+      isFire: true,
+      fireId: this.id
+    };
+    this.scene.add(this.hitboxMesh);
+
     // Particle system geometry and texture
     this.initParticles();
 
@@ -198,12 +214,18 @@ class FireEntity {
       this.group.remove(this.healthBarBg);
       this.group.remove(this.healthBarFg);
       this.baseDisc.material.color.setHex(0x111111);
+      if (this.hitboxMesh) {
+        this.scene.remove(this.hitboxMesh);
+      }
       return true; // Newly extinguished
     }
     return false;
   }
 
   destroy() {
+    if (this.hitboxMesh) {
+      this.scene.remove(this.hitboxMesh);
+    }
     this.scene.remove(this.group);
   }
 }
@@ -257,11 +279,21 @@ class FireSystem {
     return active;
   }
 
+  getHitboxMeshes() {
+    const hitboxes = [];
+    for (const [id, fire] of this.fires.entries()) {
+      if (!fire.isExtinguished && fire.hitboxMesh) {
+        hitboxes.push(fire.hitboxMesh);
+      }
+    }
+    return hitboxes;
+  }
+
   /**
    * Applies extinguisher spray check.
    * If nozzle pos + spray vector intersects a fire within range and angle, dampens it.
    */
-  applyExtinguisher(nozzlePos, sprayDir, maxRange = 1.2, coneAngleRad = 0.45, rate = 0.45, dt = 0.016) {
+  applyExtinguisher(nozzlePos, sprayDir, maxRange = 1.35, coneAngleRad = 0.55, rate = 0.60, dt = 0.016) {
     let anyHit = false;
     const hitFires = [];
 

@@ -47,6 +47,10 @@ class UIController {
     this.stuckThreshold = 1.5;     // seconds before declaring stuck
     this.posCheckTimer = 0;        // sample position every N seconds
 
+    // Optical flame proximity estimator & 2D radar mapper
+    this.recentBboxAreas = [];
+    this.mapper = null;
+
     // Teleop key state
     this.activeKeys = new Set();
 
@@ -286,17 +290,42 @@ class UIController {
     this.aiInferenceResult = res;
 
     if (res.best_target) {
+      // Calculate normalized bounding box area (w*h / W*H)
+      let bboxArea = 0;
+      if (res.best_target.bbox && res.best_target.frame_dims) {
+        const frameArea = (res.best_target.frame_dims[0] || 640) * (res.best_target.frame_dims[1] || 480);
+        const w = res.best_target.bbox[2] || 0;
+        const h = res.best_target.bbox[3] || 0;
+        bboxArea = (w * h) / frameArea;
+      }
+
+      this.recentBboxAreas.push(bboxArea);
+      if (this.recentBboxAreas.length > 5) this.recentBboxAreas.shift();
+      const avgBboxArea = this.recentBboxAreas.reduce((a, b) => a + b, 0) / this.recentBboxAreas.length;
+
+      // Estimate distance in cm from bounding box if missing or 0
+      let estimatedDistCm = res.best_target.distanceCm;
+      if (!estimatedDistCm || estimatedDistCm <= 0) {
+        if (avgBboxArea > 0.001) {
+          // Empirical pinhole optical formula: d ~ k / sqrt(area)
+          estimatedDistCm = Math.round(15.0 / Math.sqrt(avgBboxArea));
+        }
+      }
+
       this.realVisionTarget = {
         confidence: res.best_target.confidence,
         x: res.best_target.x,
         y: res.best_target.y,
         bbox: res.best_target.bbox,
         frame_dims: res.best_target.frame_dims,
+        bbox_area: avgBboxArea,
+        distanceCm: estimatedDistCm,
         isConfirmed: (res.state === 'FIRE_CONFIRMED'),
         backend: res.backend,
         inferenceMs: res.inference_ms
       };
     } else {
+      this.recentBboxAreas = [];
       this.realVisionTarget = null;
     }
 
@@ -353,6 +382,10 @@ class UIController {
     // Stream Virtual Camera to Python Detection Model
     this.sendCameraFrameForInference(dt);
 
+    // 1. Update 2D Radar Projection Mapping & Predict Avoidance Trajectory
+    this.updateRadarMap(telem);
+
+    // 2. Navigation Policies
     if (this.syncMode === 'teleop') {
       this.handleTeleopControls();
     } else if (this.syncMode === 'neural') {
@@ -363,9 +396,30 @@ class UIController {
       this.handleTeleopControls();
     }
 
+    // 3. Visualization & Telemetry Broadcast
     this.computePredictionPath(telem);
     this.updateHud(telem);
     this.broadcastTelemetry(telem);
+  }
+
+  updateRadarMap(telem) {
+    if (!this.mapper && typeof UltrasonicMapper !== 'undefined') {
+      this.mapper = new UltrasonicMapper('map-canvas');
+    }
+    if (this.mapper) {
+      const target = this.realVisionTarget || telem.target;
+      this.latestAvoidance = this.mapper.update({
+        robotPos: this.robot.position,
+        robotYaw: this.robot.yaw,
+        distF: telem.dist_front,
+        distL: telem.dist_left,
+        distR: telem.dist_right,
+        hasFire: !!(telem.flame_detected || (target && target.confidence > 0.4)),
+        target: target,
+        isSpraying: !!this.robot.solenoidActive,
+        robotState: this.robotState
+      });
+    }
   }
 
   handleTeleopControls() {
@@ -453,8 +507,12 @@ class UIController {
 
     const headingRate = this.robot.currentAngularSpeed || 0.0;
 
-    // Check standoff suppression zone (45 - 50 cm)
-    if (hasFire && (targetDist <= 0.50 || distF <= 0.46)) {
+    // Check standoff suppression zone (45 - 55 cm) with multi-signal proximity:
+    // 1. targetDist <= 0.55m, 2. Front ultrasonic distF <= 0.50m, 3. Rolling avg flame bbox area >= 0.10
+    const avgArea = (target && target.bbox_area !== undefined) ? target.bbox_area : 0;
+    const isAtStandoffDistance = (targetDist <= 0.55 || distF <= 0.50 || avgArea >= 0.10);
+
+    if (hasFire && isAtStandoffDistance) {
       this.robotState = 'EXTINGUISHING';
       this.robot.setMotorPwm(0, 0);
       this.robot.solenoidActive = true;
@@ -485,6 +543,13 @@ class UIController {
         this.prevPosZ = this.robot.position.z;
       }
 
+      const avoidance = this.latestAvoidance || (this.mapper ? this.mapper.findClearAvoidancePath(this.robot.position, this.robot.yaw, telem.dist_front, telem.dist_left, telem.dist_right, target) : null);
+
+      if (!hasFire && avoidance && avoidance.isObstacleAhead) {
+        // Feed the predicted clear heading directly into the neural policy!
+        targetRelYaw = avoidance.clearAngle;
+      }
+
       // 2. Forward pass through Neural Local Navigation Model
       let { leftPwm, rightPwm } = this.navModel.step(
         distF,
@@ -496,33 +561,26 @@ class UIController {
         headingRate
       );
 
-      // 3. Active Obstacle Overtaking & Clear-Path Selection:
-      // If front sensor detects an obstacle/wall, ensure the robot executes an overtaking arc!
-      if (!hasFire && distF < 0.65) {
-        // Choose the clearer path
-        let turnRight = (distR >= distL);
-        if (Math.abs(distR - distL) <= 0.08) {
-          // Symmetric clearance: maintain consistent turn bias to avoid hesitation
-          turnRight = (this.overtakeBias !== undefined) ? (this.overtakeBias > 0) : true;
+      // 3. Active Mapping-Based Obstacle Avoidance & Path Following:
+      // Steer decisively along the predicted new path generated from the mapping!
+      if (!hasFire && avoidance && avoidance.isObstacleAhead) {
+        const rec = avoidance.recommendedPwm;
+        if (Math.abs(leftPwm) < 70 && Math.abs(rightPwm) < 70) {
+          leftPwm = rec.left;
+          rightPwm = rec.right;
+        } else {
+          // Harmonize neural model output with predictive mapping guidance
+          leftPwm = Math.round(leftPwm * 0.35 + rec.left * 0.65);
+          rightPwm = Math.round(rightPwm * 0.35 + rec.right * 0.65);
         }
-        this.overtakeBias = turnRight ? 1 : -1;
-
-        // If policy outputs near-zero or stalled speeds, enforce active overtaking curve
-        if (Math.abs(leftPwm) < 60 && Math.abs(rightPwm) < 60) {
-          const inner = (distF < 0.38) ? -20 : 40;
-          leftPwm = turnRight ? 150 : inner;
-          rightPwm = turnRight ? inner : 150;
-        }
-      } else if (distF >= 0.70) {
-        this.overtakeBias = undefined;
       }
 
-      // 4. Force recovery burst if stalled in front of an obstacle for > 0.4s
-      if (!hasFire && this.stuckTimer >= 0.40) {
+      // 4. Force recovery burst if stalled in front of an obstacle for > 0.35s
+      if (!hasFire && this.stuckTimer >= 0.35) {
         this.stuckTimer = 0;
-        const turnRight = (distR >= distL);
-        leftPwm = turnRight ? 160 : -40;
-        rightPwm = turnRight ? -40 : 160;
+        const turnRight = (avoidance && avoidance.clearAngle > 0) || (distR >= distL);
+        leftPwm = turnRight ? 165 : -35;
+        rightPwm = turnRight ? -35 : 165;
       }
 
       this.robot.setMotorPwm(leftPwm, rightPwm);
@@ -636,18 +694,15 @@ class UIController {
           this.avoidPhase = 'BACKOUT';
           this.avoidTimer = 0.50;
         } else {
-          // Moderate distance — pivot away
+          // Moderate distance — pivot along the predicted clear angle from mapping!
           this.avoidPhase = 'PIVOT';
           this.avoidTimer = 0;
-          // Set target yaw: turn 90deg toward the more open side
-          const turnAngle = (Math.PI / 2) + (Math.random() * 0.3 - 0.15);
-          if (distL >= distR) {
-            this.targetYaw = robotYaw - turnAngle; // turn left (more open)
-            this.avoidTurnLeft = true;
-          } else {
-            this.targetYaw = robotYaw + turnAngle; // turn right
-            this.avoidTurnLeft = false;
-          }
+          const avoidance = this.latestAvoidance;
+          let turnAngle = (avoidance && avoidance.isObstacleAhead)
+            ? avoidance.clearAngle
+            : ((distL >= distR ? -1 : 1) * (Math.PI / 2));
+          this.targetYaw = this._normalizeAngle(robotYaw + turnAngle);
+          this.avoidTurnLeft = (turnAngle < 0);
         }
       }
     }
@@ -942,9 +997,10 @@ class UIController {
           break;
         }
 
-        // Standoff spray distance: stop at 45-50cm (extinguisher spray reaches 1.2m)
+        // Standoff spray distance: stop at 45-55cm (extinguisher spray reaches 1.35m)
         const targetDist = (target.distanceCm && target.distanceCm > 0) ? target.distanceCm : distF;
-        if (targetDist <= 50.0 || distF <= 45.0) {
+        const avgArea = (target && target.bbox_area !== undefined) ? target.bbox_area : 0;
+        if (targetDist <= 55.0 || distF <= 50.0 || avgArea >= 0.10) {
           this.robot.setMotorPwm(0, 0);
           this.robotState = 'EXTINGUISHING';
           this.stateTimer = 0;
@@ -1029,6 +1085,14 @@ class UIController {
    */
   computePredictionPath(telem) {
     if (!this.sim.predictionPath) return;
+
+    // 1. Predictive Avoidance Path from Mapping: when obstacle is ahead, render the predicted bypass route!
+    const avoidance = this.latestAvoidance;
+    if (avoidance && avoidance.isObstacleAhead && avoidance.worldPath && avoidance.worldPath.length > 1) {
+      const avoid3DPoints = avoidance.worldPath.map(p => new THREE.Vector3(p.x, 0.015, p.z));
+      this.sim.predictionPath.update(avoid3DPoints, 'avoid');
+      return;
+    }
 
     const points = [];
     const robotPos = this.robot.position.clone();

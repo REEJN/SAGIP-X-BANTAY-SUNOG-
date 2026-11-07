@@ -238,8 +238,14 @@ class SimWorld {
   update() {
     const dt = Math.min(this.clock.getDelta(), 0.05);
 
-    // 1. Update Robot Kinematics & Collisions (Pass rectangular arena bounds)
-    const obstacles = this.obstacleManager.getRaycastMeshes();
+    // 1. Update Robot Kinematics & Collisions (Pass rectangular arena bounds & obstacles + fire hitboxes)
+    const fireHitboxes = (this.fireSystem && this.fireSystem.getHitboxMeshes)
+      ? this.fireSystem.getHitboxMeshes()
+      : [];
+    const obstacles = [
+      ...this.obstacleManager.getRaycastMeshes(),
+      ...fireHitboxes
+    ];
     const arenaBounds = { maxX: (this.arenaWidth / 2) - 0.255, maxZ: (this.arenaHeight / 2) - 0.255 };
     this.robot.update(dt, obstacles, arenaBounds);
 

@@ -120,9 +120,18 @@ class SensorSimulator {
     // -------------------------------------------------------------------------
     // 1. Raycast Ultrasonic Sensors
     // -------------------------------------------------------------------------
-    const collidableMeshes = [
+    const fireHitboxes = (this.fireSystem && this.fireSystem.getHitboxMeshes)
+      ? this.fireSystem.getHitboxMeshes()
+      : [];
+
+    const obstacleMeshes = [
       ...this.obstacleManager.getRaycastMeshes(),
       ...arenaWalls
+    ];
+
+    const collidableMeshes = [
+      ...obstacleMeshes,
+      ...fireHitboxes
     ];
 
     const sensorConfigs = [
@@ -198,9 +207,9 @@ class SensorSimulator {
 
         // Check sensor FOV cone (+/- 30 deg = 0.52 rad)
         if (angle <= 0.52) {
-          // Check line-of-sight obstruction by obstacles
+          // Check line-of-sight obstruction by obstacles (crates, walls)
           this.raycaster.set(flameOrigin, toFireNorm);
-          const hits = this.raycaster.intersectObjects(collidableMeshes, false);
+          const hits = this.raycaster.intersectObjects(obstacleMeshes, false);
 
           let occluded = false;
           if (hits.length > 0 && hits[0].distance < dist - 0.2) {

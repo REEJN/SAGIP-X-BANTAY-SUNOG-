@@ -191,17 +191,31 @@
 
   <!-- Bottom Left: Virtual Camera PIP & Teleop Keypad -->
   <div class="bottom-left-dock">
-    <!-- Camera Viewport Card -->
-    <div class="pip-camera-card">
-      <div class="pip-header">
-        <span>📷 VIRTUAL WEBCAM (V4L2)</span>
-        <span style="color: var(--accent-cyan);">640x480</span>
+    <!-- Camera & Radar Display Stack -->
+    <div class="camera-map-stack">
+      <!-- 2D Ultrasonic Radar / SLAM Projection Map Window -->
+      <div class="ultrasonic-map-card">
+        <div class="map-header">
+          <span>📡 2D RADAR PROJECTION MAP</span>
+          <span style="color: var(--accent-cyan);">ACTIVE (3-BEAM)</span>
+        </div>
+        <div class="map-viewport">
+          <canvas id="map-canvas" width="250" height="150"></canvas>
+        </div>
       </div>
-      <div class="pip-viewport">
-        <canvas id="pip-canvas"></canvas>
-        <div class="pip-crosshair"></div>
-        <div id="pip-bbox" class="pip-bbox">
-          <div class="pip-bbox-label">FIRE</div>
+
+      <!-- Camera Viewport Card -->
+      <div class="pip-camera-card">
+        <div class="pip-header">
+          <span>📷 VIRTUAL WEBCAM (V4L2)</span>
+          <span style="color: var(--accent-cyan);">640x480</span>
+        </div>
+        <div class="pip-viewport">
+          <canvas id="pip-canvas"></canvas>
+          <div class="pip-crosshair"></div>
+          <div id="pip-bbox" class="pip-bbox">
+            <div class="pip-bbox-label">FIRE</div>
+          </div>
         </div>
       </div>
     </div>
@@ -238,6 +252,7 @@
   <script src="js/robot_model.js"></script>
   <script src="js/sensor_simulator.js"></script>
   <script src="js/asset_loader.js"></script>
+  <script src="js/ultrasonic_mapper.js"></script>
   <script src="js/nav_model_runner.js"></script>
   <script src="js/sim_world.js"></script>
   <script src="js/ui_controller.js"></script>
