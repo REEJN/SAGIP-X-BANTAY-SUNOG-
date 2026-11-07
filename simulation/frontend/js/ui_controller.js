@@ -51,15 +51,6 @@ class UIController {
     this.recentBboxAreas = [];
     this.mapper = null;
 
-    // Fixed Arena Exploration Waypoints (Eliminates rotating search destinations)
-    this.searchWaypoints = [
-      { x: 0.0, z: 2.2 },
-      { x: 2.2, z: 0.0 },
-      { x: 0.0, z: -2.2 },
-      { x: -2.2, z: 0.0 }
-    ];
-    this.searchWaypointIdx = 0;
-
     // Teleop key state
     this.activeKeys = new Set();
 
@@ -420,32 +411,7 @@ class UIController {
     }
     if (this.mapper) {
       const target = this.realVisionTarget || telem.target;
-
-      // Determine best world destination goal { x, z }
-      let goalPos = null;
-      if (this.fireSystem) {
-        const activeFires = this.fireSystem.getActiveFires();
-        if (activeFires.length > 0) {
-          let closestDist = Infinity;
-          for (const f of activeFires) {
-            const d = Math.hypot(f.position.x - this.robot.position.x, f.position.z - this.robot.position.z);
-            if (d < closestDist) {
-              closestDist = d;
-              goalPos = { x: f.position.x, z: f.position.z };
-            }
-          }
-        }
-      }
-
-      // If no active fire, track fixed arena exploration waypoint (does not rotate with robot)
-      if (!goalPos) {
-        const curSearchWp = this.searchWaypoints[this.searchWaypointIdx];
-        const distToSearchWp = Math.hypot(curSearchWp.x - this.robot.position.x, curSearchWp.z - this.robot.position.z);
-        if (distToSearchWp < 0.65) {
-          this.searchWaypointIdx = (this.searchWaypointIdx + 1) % this.searchWaypoints.length;
-        }
-        goalPos = this.searchWaypoints[this.searchWaypointIdx];
-      }
+      const hasFire = !!(telem.flame_detected || (target && target.confidence > 0.4));
 
       this.latestAvoidance = this.mapper.update({
         robotPos: this.robot.position,
@@ -453,9 +419,9 @@ class UIController {
         distF: telem.dist_front,
         distL: telem.dist_left,
         distR: telem.dist_right,
-        hasFire: !!(telem.flame_detected || (target && target.confidence > 0.4)),
+        hasFire: hasFire,
         target: target,
-        goalPos: goalPos,
+        goalPos: null,
         isSpraying: !!this.robot.solenoidActive,
         robotState: this.robotState
       });
@@ -562,13 +528,16 @@ class UIController {
       if (this.stateTimer >= 2.0 && (!telem.flame_detected || this.stateTimer >= 4.0)) {
         this.robot.solenoidActive = false;
         this.robotState = 'SEARCHING';
+        this.scanPhase = 'SWEEP';
+        this.phaseTimer = 0;
         this.stateTimer = 0;
       }
-    } else {
+    } else if (hasFire) {
+      // Direct Fire Approach Mode
       this.robot.solenoidActive = false;
-      this.robotState = hasFire ? 'APPROACHING' : 'SEARCHING';
+      this.robotState = 'APPROACHING';
 
-      // 1. Stuck / Stall Detection (ensures robot never stops in front of an obstacle)
+      // 1. Stuck / Stall Detection
       this.posCheckTimer += dt;
       if (this.posCheckTimer >= 0.25) {
         this.posCheckTimer = 0;
@@ -588,11 +557,6 @@ class UIController {
       const avoidance = this.latestAvoidance || (this.mapper ? this.mapper.findClearAvoidancePath(this.robot.position, this.robot.yaw, telem.dist_front, telem.dist_left, telem.dist_right, target) : null);
 
       if (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched)) {
-        // Feed the predicted clear heading directly into the neural policy!
-        // avoidance.clearAngle is smoothly computed and biased toward goal destination (fire or room path)
-        targetRelYaw = avoidance.clearAngle;
-      } else if (!hasFire && avoidance && Math.abs(avoidance.clearAngle) > 0.05) {
-        // Guide exploration along the clear room corridor toward open space
         targetRelYaw = avoidance.clearAngle;
       }
 
@@ -607,8 +571,7 @@ class UIController {
         headingRate
       );
 
-      // Deadband compensation & friction overcoming:
-      // Physical skid-steer DC motors stall below 70 PWM. Scale active navigation signals to 105-170 PWM.
+      // Deadband compensation & friction overcoming
       const overcomeFriction = (pwm) => {
         if (Math.abs(pwm) < 15) return 0;
         const sign = Math.sign(pwm);
@@ -619,22 +582,19 @@ class UIController {
       leftPwm = overcomeFriction(leftPwm);
       rightPwm = overcomeFriction(rightPwm);
 
-      // 3. Active Mapping-Based Obstacle Avoidance & Path Following:
-      // Steer decisively along the predicted path generated from the mapping!
+      // Priority obstacle avoidance along bypass trajectory
       if (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched)) {
         const rec = avoidance.recommendedPwm;
-        // Obstacle / wall proximity takes full priority to prevent collisions
         leftPwm = rec.left;
         rightPwm = rec.right;
       } else if (avoidance && avoidance.recommendedPwm) {
-        // Clear cruise: harmonize neural policy with pure-pursuit path tracking
         const rec = avoidance.recommendedPwm;
         leftPwm = Math.round(leftPwm * 0.40 + rec.left * 0.60);
         rightPwm = Math.round(rightPwm * 0.40 + rec.right * 0.60);
       }
 
-      // 4. Force recovery burst if stalled in front of an obstacle for > 0.35s
-      if (!hasFire && this.stuckTimer >= 0.35) {
+      // Force recovery burst if stalled in front of an obstacle for > 0.35s
+      if (this.stuckTimer >= 0.35) {
         this.stuckTimer = 0;
         const turnRight = (avoidance && avoidance.clearAngle > 0) || (distR >= distL);
         leftPwm = turnRight ? 165 : -35;
@@ -642,6 +602,133 @@ class UIController {
       }
 
       this.robot.setMotorPwm(leftPwm, rightPwm);
+
+    } else {
+      // 100% Ego-Centric Sensor-Driven Boustrophedon Zigzag Room Sweep + Wall vs Obstacle Classifier
+      this.robot.solenoidActive = false;
+      this.robotState = 'SEARCHING';
+      this.phaseTimer += dt;
+
+      // Stuck detection
+      this.posCheckTimer += dt;
+      if (this.posCheckTimer >= 0.25) {
+        this.posCheckTimer = 0;
+        const dx = this.robot.position.x - this.prevPosX;
+        const dz = this.robot.position.z - this.prevPosZ;
+        const moved = Math.hypot(dx, dz);
+        if (moved < 0.005) {
+          this.stuckTimer += 0.25;
+        } else {
+          this.stuckTimer = 0;
+        }
+        this.prevPosX = this.robot.position.x;
+        this.prevPosZ = this.robot.position.z;
+      }
+
+      const avoidance = this.latestAvoidance;
+      const classification = (avoidance && avoidance.classification)
+        ? avoidance.classification
+        : { type: 'CLEAR', flankClearSide: (distR >= distL ? 'RIGHT' : 'LEFT') };
+
+      // Wall detection: triggers 90deg lane-turn arc into adjacent sweep lane
+      if (classification.type === 'WALL' && (distF < 0.68 || telem.dist_front < 68.0)) {
+        if (this.scanPhase === 'SWEEP') {
+          this.scanPhase = 'TURN_90_OUT';
+          this.phaseTimer = 0;
+          this.scanDirection = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+          this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
+          this.robot.setMotorPwm(0, 0);
+        }
+      }
+
+      switch (this.scanPhase) {
+        case 'SWEEP':
+          if (classification.type === 'OBSTACLE' && (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched))) {
+            // Discrete Obstacle (Crate / Barrel): Bypass around obstacle without abandoning sweep lane!
+            const rec = avoidance.recommendedPwm;
+            this.robot.setMotorPwm(rec.left, rec.right);
+          } else {
+            // Clear lane sweep forward progress
+            if (this.phaseTimer > 5.5) {
+              this.scanPhase = 'TURN_90_OUT';
+              this.phaseTimer = 0;
+              this.scanDirection = (distR >= distL) ? 1 : -1;
+              this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
+              this.robot.setMotorPwm(0, 0);
+            } else {
+              // Cruising along sweep corridor
+              let { leftPwm, rightPwm } = this.navModel.step(
+                distF,
+                distL,
+                distR,
+                0.0,
+                5.0,
+                false,
+                headingRate
+              );
+              leftPwm = Math.round(leftPwm * 0.35 + 140 * 0.65);
+              rightPwm = Math.round(rightPwm * 0.35 + 140 * 0.65);
+              this.robot.setMotorPwm(leftPwm, rightPwm);
+            }
+          }
+          break;
+
+        case 'TURN_90_OUT': {
+          const yawErr = this._normalizeAngle(this.targetYaw - this.robot.yaw);
+          if (Math.abs(yawErr) < this.turnTolerance || this.phaseTimer > 3.0) {
+            this.scanPhase = 'SHIFT_LANE';
+            this.phaseTimer = 0;
+            this.robot.setMotorPwm(0, 0);
+          } else {
+            const speed = 145;
+            if (yawErr > 0) {
+              this.robot.setMotorPwm(speed, -speed);
+            } else {
+              this.robot.setMotorPwm(-speed, speed);
+            }
+          }
+          break;
+        }
+
+        case 'SHIFT_LANE':
+          // Drive forward lane width spacing (~0.50m)
+          this.robot.setMotorPwm(135, 135);
+          if (distF < 0.40 || this.phaseTimer >= 0.85) {
+            this.scanPhase = 'TURN_90_IN';
+            this.phaseTimer = 0;
+            this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
+            this.robot.setMotorPwm(0, 0);
+          }
+          break;
+
+        case 'TURN_90_IN': {
+          const yawErr2 = this._normalizeAngle(this.targetYaw - this.robot.yaw);
+          if (Math.abs(yawErr2) < this.turnTolerance || this.phaseTimer > 3.0) {
+            this.scanDirection = -this.scanDirection;
+            this.scanPhase = 'SWEEP';
+            this.phaseTimer = 0;
+            this.robot.setMotorPwm(140, 140);
+          } else {
+            const speed = 145;
+            if (yawErr2 > 0) {
+              this.robot.setMotorPwm(speed, -speed);
+            } else {
+              this.robot.setMotorPwm(-speed, speed);
+            }
+          }
+          break;
+        }
+      }
+
+      // Stuck recovery guard if blocked in SWEEP
+      if (this.stuckTimer >= 0.40 && this.scanPhase === 'SWEEP') {
+        this.stuckTimer = 0;
+        this.scanPhase = 'TURN_90_OUT';
+        this.phaseTimer = 0;
+        this.scanDirection = (distR >= distL) ? 1 : -1;
+        this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
+        this.robot.setMotorPwm(0, 0);
+      }
     }
   }
 

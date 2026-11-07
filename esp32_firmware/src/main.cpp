@@ -275,17 +275,35 @@ void loop() {
                 break;
             }
 
+            float dF = sensorMgr.getFrontDistance();
+            float dL = sensorMgr.getLeftDistance();
+            float dR = sensorMgr.getRightDistance();
+
+            // Geometric Classification of Obstruction:
+            // Continuous Wall (both flanks constrained or symmetric close corridor) vs Discrete Obstacle (open flank)
+            bool isWall = (dL < 60.0f && dR < 60.0f) || (fabsf(dL - dR) < 18.0f && dF < 45.0f);
+            bool isFlankClearRight = (dR >= dL);
+
             // Obstacle Avoidance Navigation
             if (sensorMgr.isFrontBlocked()) {
-                // Front obstacle detected! Decide which way to turn
-                if (now - lastRoamTurnMs > 600) {
-                    roamingTurnLeft = (sensorMgr.getLeftDistance() >= sensorMgr.getRightDistance());
-                    lastRoamTurnMs = now;
-                }
-                if (roamingTurnLeft) {
-                    motorCtrl.pivotLeft(SPEED_OBSTACLE_TURN);
+                if (isWall) {
+                    // Continuous Wall Encountered: Execute decisive 90-degree Lane Turn away from wall
+                    if (now - lastRoamTurnMs > 600) {
+                        roamingTurnLeft = !isFlankClearRight;
+                        lastRoamTurnMs = now;
+                    }
+                    if (roamingTurnLeft) {
+                        motorCtrl.pivotLeft(SPEED_OBSTACLE_TURN);
+                    } else {
+                        motorCtrl.pivotRight(SPEED_OBSTACLE_TURN);
+                    }
                 } else {
-                    motorCtrl.pivotRight(SPEED_OBSTACLE_TURN);
+                    // Discrete Obstacle (Crate / Barrel): Perform smooth bypass curve without losing lane heading
+                    if (isFlankClearRight) {
+                        motorCtrl.driveSteer(SPEED_SEARCH_ROAM, 75); // curve right around crate
+                    } else {
+                        motorCtrl.driveSteer(SPEED_SEARCH_ROAM, -75); // curve left around crate
+                    }
                 }
             } else if (sensorMgr.isLeftBlocked()) {
                 // Steer slightly away from left wall

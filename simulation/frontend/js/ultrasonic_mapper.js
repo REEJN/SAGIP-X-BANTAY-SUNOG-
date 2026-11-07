@@ -47,6 +47,45 @@ class UltrasonicMapper {
   }
 
   /**
+   * Geometric Wall vs. Discrete Obstacle Classifier.
+   * Distinguishes continuous walls/perimeters from localized obstacles (crates/barrels)
+   * using point-cloud lateral span and 3-beam HC-SR04 flank clearance.
+   *
+   * @param {Array} localObstacles - Array of { x, z } in local robot frame
+   * @param {number} mF - front distance in meters
+   * @param {number} mL - left distance in meters
+   * @param {number} mR - right distance in meters
+   * @returns {Object} { type: 'CLEAR'|'OBSTACLE'|'WALL', spanX: number, flankClearSide: 'LEFT'|'RIGHT' }
+   */
+  classifyObject(localObstacles, mF, mL, mR) {
+    if (mF >= 1.05 && mL >= 0.85 && mR >= 0.85) {
+      return { type: 'CLEAR', spanX: 0, flankClearSide: (mR >= mL) ? 'RIGHT' : 'LEFT' };
+    }
+
+    // Filter obstacles located in the forward approach zone (Z in [0.05, 1.35m], |X| < 2.0m)
+    const forwardObs = localObstacles.filter(o => o.z > 0.05 && o.z < 1.35 && Math.abs(o.x) < 2.0);
+    let spanX = 0;
+    if (forwardObs.length > 1) {
+      const xs = forwardObs.map(o => o.x);
+      spanX = Math.max(...xs) - Math.min(...xs);
+    } else if (forwardObs.length === 1) {
+      spanX = 0.40;
+    }
+
+    const flankClearSide = (mR >= mL) ? 'RIGHT' : 'LEFT';
+    const isFlankClear = (mL > 1.10 || mR > 1.10);
+    const flankRatio = Math.abs(mL - mR) / Math.max(0.1, Math.max(mL, mR));
+
+    // Discrete Obstacle (Crate / Barrel): Narrow lateral span (<0.85m) and open flank
+    if (spanX < 0.85 && (isFlankClear || flankRatio > 0.35)) {
+      return { type: 'OBSTACLE', spanX, flankClearSide };
+    }
+
+    // Continuous surface, wide span (>=1.0m), or tightly constrained corridor => WALL
+    return { type: 'WALL', spanX, flankClearSide };
+  }
+
+  /**
    * Evaluates the mapping point cloud and 3-beam sensors to predict a stable, collision-free
    * avoidance path toward the best destination without rapid switching or oscillation.
    *
@@ -59,7 +98,8 @@ class UltrasonicMapper {
    * @param {Object|null} goalPos - optional best world destination { x, z }
    * @returns {Object} Predicted avoidance path details
    */
-  findClearAvoidancePath(robotPos, robotYaw, distF = 300, distL = 300, distR = 300, target = null, goalPos = null) {
+  findClearAvoidancePath(robotPos, robotYaw, distF = 300, distL = 300, distR = 300, target = null, goalPos = null, hasFire = false) {
+    const isFireActive = Boolean(hasFire || (target && target.confidence > 0.4));
     const now = Date.now();
     const activePoints = this.pointCloud.filter(p => now - p.time <= this.maxPointAgeMs);
 
@@ -287,6 +327,9 @@ class UltrasonicMapper {
     this.smoothedClearAngle = this.smoothedClearAngle * (1.0 - alpha) + bestAngle * alpha;
     const finalAngle = (Math.abs(this.smoothedClearAngle) < 0.03 && !isObstacleAhead) ? 0.0 : this.smoothedClearAngle;
 
+    // 7.5 Geometric Classification of Obstruction: Wall vs Discrete Obstacle
+    const classification = this.classifyObject(localObstacles, mF, mL, mR);
+
     // 8. World-Anchored Trajectory Latching (Eliminates tail-chasing and endless circulating)
     let localPath = [];
     let worldPath = [];
@@ -313,8 +356,29 @@ class UltrasonicMapper {
     }
 
     if (!this.latchedWorldPath) {
-      if (isObstacleAhead && robotPos) {
-        // Plan fresh evasive trajectory and LATCH IT in World Space!
+      if (classification.type === 'WALL' && minForwardDist < 0.75) {
+        // Wall Encountered: Generate 90deg lane-turn arc into adjacent sweep lane
+        const turnSign = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+        const turnAngle = turnSign * (Math.PI / 2);
+        localPath.push({ x: 0, y: 0 });
+        if (robotPos) worldPath.push({ x: robotPos.x, z: robotPos.z });
+
+        const numWp = 8;
+        for (let i = 1; i <= numWp; i++) {
+          const a = turnAngle * (i / numWp);
+          const s = (i / numWp) * 0.90;
+          const lx = Math.sin(a) * s;
+          const lz = Math.cos(a) * s;
+          localPath.push({ x: lx, y: lz });
+          if (robotPos) {
+            worldPath.push({
+              x: robotPos.x + lx * cosY + lz * sinY,
+              z: robotPos.z - lx * sinY + lz * cosY
+            });
+          }
+        }
+      } else if (isObstacleAhead && robotPos) {
+        // Discrete Obstacle Encountered: Plan fresh evasive trajectory and LATCH IT in World Space!
         worldPath.push({ x: robotPos.x, z: robotPos.z });
         localPath.push({ x: 0, y: 0 });
 
@@ -347,13 +411,12 @@ class UltrasonicMapper {
         this.latchedTimestamp = now;
         isPathLatched = true;
       } else if (robotPos) {
-        // Clear cruise toward goalPos:
-        // Build a direct path towards goalPos in world coordinates
+        // Clear cruise: Straight-line lane sweep path
         localPath.push({ x: 0, y: 0 });
         worldPath.push({ x: robotPos.x, z: robotPos.z });
 
-        const targetWorldBearing = (goalPos && robotPos)
-          ? Math.atan2(goalPos.x - robotPos.x, goalPos.z - robotPos.z)
+        const targetWorldBearing = (isFireActive && target && target.x !== undefined)
+          ? robotYaw + (target.x - 0.50) * 1.13
           : robotYaw;
 
         const cruiseLength = 1.8;
@@ -373,7 +436,6 @@ class UltrasonicMapper {
       }
     } else if (robotPos) {
       // Latched World Path is active!
-      // KEEP worldPath FIXED to the arena floor (do not rotate with robot)!
       worldPath = this.latchedWorldPath;
       isPathLatched = true;
 
@@ -415,6 +477,11 @@ class UltrasonicMapper {
       // Emergency reverse: immediately back out away from obstacle / wall!
       recLeft = -160;
       recRight = -160;
+    } else if (classification.type === 'WALL' && minForwardDist < 0.70) {
+      // Decisive 90deg pivot turn away from wall
+      const turnSign = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+      recLeft = turnSign * 160;
+      recRight = -turnSign * 160;
     } else if (isObstacleAhead || (isPathLatched && minForwardDist < 0.70)) {
       // Decelerate proportional to proximity to wall/obstacle
       const proximityFactor = Math.max(0.0, Math.min(1.0, (minForwardDist - 0.28) / 0.55));
@@ -427,7 +494,6 @@ class UltrasonicMapper {
         recRight = -turnDir * 165;
       } else {
         // Controlled pure pursuit curve along fixed world path:
-        // As pathYaw shrinks toward 0, turnRate shrinks to 0, driving straight forward!
         const turnRate = Math.min(130, Math.abs(pathYaw) * 150);
         if (pathYaw > 0.06) {
           recLeft = Math.min(220, baseFwd + turnRate);
@@ -449,14 +515,17 @@ class UltrasonicMapper {
     }
 
     const angleDeg = Math.round((finalAngle * 180) / Math.PI);
-    let pathStatus = 'CLEAR';
-    if (isPathLatched || isObstacleAhead) {
-      pathStatus = finalAngle >= 0 ? `BYPASS RIGHT (+${angleDeg}°)` : `BYPASS LEFT (${angleDeg}°)`;
+    let pathStatus = 'LANE SWEEP';
+    if (classification.type === 'WALL' && minForwardDist < 0.85) {
+      pathStatus = `WALL (ZIGZAG 90° ${classification.flankClearSide})`;
+    } else if (classification.type === 'OBSTACLE' && (isPathLatched || isObstacleAhead)) {
+      pathStatus = `OBSTACLE (BYPASS ${classification.flankClearSide})`;
     }
 
     return {
       isObstacleAhead,
       isPathLatched,
+      classification,
       clearAngle: pathYaw, // Heading error to the lookahead waypoint
       pathYaw: pathYaw,
       recommendedPwm: { left: recLeft, right: recRight },
@@ -531,7 +600,7 @@ class UltrasonicMapper {
     this.pointCloud = this.pointCloud.filter(p => now - p.time <= this.maxPointAgeMs);
 
     // Predict stable, destination-directed avoidance path from mapping
-    const avoidance = this.findClearAvoidancePath(robotPos, robotYaw, distF, distL, distR, target, goalPos);
+    const avoidance = this.findClearAvoidancePath(robotPos, robotYaw, distF, distL, distR, target, goalPos, hasFire);
     this.latestAvoidance = avoidance;
 
     // -------------------------------------------------------------------------

@@ -282,6 +282,51 @@ class TestNavigationModel(unittest.TestCase):
         self.assertGreater(r_side, 80.0, "Must maintain forward momentum while passing obstacle")
         self.assertLess(abs(l_side - r_side), 35.0, "Must cruise straight past obstacle without circular looping")
 
+    def test_wall_vs_obstacle_classification(self):
+        """
+        Verify geometric classification of obstacles (crates/barrels) vs walls (perimeter/dividers).
+        Discrete obstacles have narrow point-cloud lateral span (<0.85m) and open flank clearance.
+        Continuous walls have wide lateral span (>=1.0m) or constrained flanks.
+        """
+        def classify_object(local_obstacles, mF, mL, mR):
+            if mF >= 1.05 and mL >= 0.85 and mR >= 0.85:
+                return {"type": "CLEAR", "flankClearSide": "RIGHT" if mR >= mL else "LEFT"}
+            forward_obs = [o for o in local_obstacles if 0.05 < o["z"] < 1.35 and abs(o["x"]) < 2.0]
+            span_x = 0.0
+            if len(forward_obs) > 1:
+                xs = [o["x"] for o in forward_obs]
+                span_x = max(xs) - min(xs)
+            elif len(forward_obs) == 1:
+                span_x = 0.40
+            flank_clear_side = "RIGHT" if mR >= mL else "LEFT"
+            is_flank_clear = (mL > 1.10 or mR > 1.10)
+            flank_ratio = abs(mL - mR) / max(0.1, max(mL, mR))
+            if span_x < 0.85 and (is_flank_clear or flank_ratio > 0.35):
+                return {"type": "OBSTACLE", "spanX": span_x, "flankClearSide": flank_clear_side}
+            return {"type": "WALL", "spanX": span_x, "flankClearSide": flank_clear_side}
+
+        # Case 1: Discrete Crate Obstacle ahead with open right flank
+        crate_points = [{"x": 0.05, "z": 0.55}]
+        res_crate = classify_object(crate_points, mF=0.55, mL=0.50, mR=1.80)
+        self.assertEqual(res_crate["type"], "OBSTACLE")
+        self.assertEqual(res_crate["flankClearSide"], "RIGHT")
+
+        # Case 2: Discrete Barrel Obstacle with narrow span (0.35m) and open left flank
+        barrel_points = [{"x": -0.15, "z": 0.60}, {"x": 0.20, "z": 0.60}]
+        res_barrel = classify_object(barrel_points, mF=0.60, mL=1.60, mR=0.45)
+        self.assertEqual(res_barrel["type"], "OBSTACLE")
+        self.assertEqual(res_barrel["flankClearSide"], "LEFT")
+
+        # Case 3: Continuous Wall spanning across corridor (1.4m span)
+        wall_points = [{"x": -0.70, "z": 0.50}, {"x": 0.0, "z": 0.50}, {"x": 0.70, "z": 0.50}]
+        res_wall = classify_object(wall_points, mF=0.50, mL=0.40, mR=0.40)
+        self.assertEqual(res_wall["type"], "WALL")
+
+        # Case 4: Constrained boundary (both flanks blocked, tight corner)
+        corner_points = [{"x": 0.0, "z": 0.40}]
+        res_corner = classify_object(corner_points, mF=0.40, mL=0.35, mR=0.35)
+        self.assertEqual(res_corner["type"], "WALL")
+
 
 if __name__ == "__main__":
     unittest.main()
