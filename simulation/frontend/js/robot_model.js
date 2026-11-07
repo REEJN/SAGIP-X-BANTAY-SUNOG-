@@ -364,17 +364,19 @@ class RobotModel {
     const nextZ = this.position.z + forwardZ * this.currentLinearSpeed * dt;
 
     // -------------------------------------------------------------------------
-    // 3. Accurate Collision Resolution (OBB Boxes/Walls, Cylinders, Arena)
+    // 3. Accurate Two-Circle Capsule Collision Resolution & Sliding Physics
     // -------------------------------------------------------------------------
-    // Increased collision radius (0.23m) covers chassis corners (0.192m diagonal + 0.035m margins)
-    const robotRadius = 0.23;
+    // Two overlapping circles along chassis longitudinal centerline:
+    // Front circle and Rear circle eliminate corner clipping during rotation & doorways
+    const circleRadius = 0.13;
+    const circleOffset = 0.075;
     let resolvedX = nextX;
     let resolvedZ = nextZ;
 
     // Helper: Resolve rectangular boundary limits (9.0m x 9.0m arena by default)
-    const clampArenaRect = (x, z) => {
-      let boundX = 4.5 - 0.075 - robotRadius; // ~4.195m from center
-      let boundZ = 4.5 - 0.075 - robotRadius;
+    const clampArenaRect = (x, z, r = 0.16) => {
+      let boundX = 4.5 - 0.075 - r;
+      let boundZ = 4.5 - 0.075 - r;
       if (typeof arenaRadius === 'object' && arenaRadius !== null) {
         boundX = arenaRadius.maxX !== undefined ? arenaRadius.maxX : boundX;
         boundZ = arenaRadius.maxZ !== undefined ? arenaRadius.maxZ : boundZ;
@@ -385,106 +387,137 @@ class RobotModel {
       };
     };
 
-    // 2-pass iterative constraint solver to eliminate corner clipping & multi-contact wedging
-    for (let iter = 0; iter < 2; iter++) {
-      // Apply rectangular arena wall boundary
-      const clamped = clampArenaRect(resolvedX, resolvedZ);
-      resolvedX = clamped.x;
-      resolvedZ = clamped.z;
+    let totalPushX = 0;
+    let totalPushZ = 0;
 
-      // Obstacle collision resolution: exact 2D OBB for boxes/walls, circle for cylinders
-      if (obstacles && obstacles.length > 0) {
-        for (const obs of obstacles) {
-          if (!obs.userData) continue;
-          const oPos = obs.position;
-          const oType = obs.userData.type;
+    // 3-pass iterative constraint solver for zero clipping & multi-contact corner wedging
+    for (let iter = 0; iter < 3; iter++) {
+      // Check both front and rear circles of the robot capsule
+      const circles = [
+        { x: resolvedX + forwardX * circleOffset, z: resolvedZ + forwardZ * circleOffset },
+        { x: resolvedX - forwardX * circleOffset, z: resolvedZ - forwardZ * circleOffset }
+      ];
 
-          if (oType === 'cylinder') {
-            // Circle-to-Circle Collision
-            const cRadius = obs.userData.radius || 0.3;
-            const minSep = robotRadius + cRadius;
-            const dx = resolvedX - oPos.x;
-            const dz = resolvedZ - oPos.z;
-            const dist = Math.hypot(dx, dz);
+      for (const circle of circles) {
+        // 1. Boundary walls
+        const clamped = clampArenaRect(circle.x, circle.z, circleRadius);
+        const wallDx = clamped.x - circle.x;
+        const wallDz = clamped.z - circle.z;
+        if (Math.abs(wallDx) > 0.0001 || Math.abs(wallDz) > 0.0001) {
+          resolvedX += wallDx;
+          resolvedZ += wallDz;
+          totalPushX += wallDx;
+          totalPushZ += wallDz;
+        }
 
-            if (dist < minSep) {
-              const pushDist = minSep - dist + 0.003;
-              if (dist > 0.001) {
-                resolvedX += (dx / dist) * pushDist;
-                resolvedZ += (dz / dist) * pushDist;
-              } else {
-                resolvedX += pushDist;
+        // 2. Obstacles (boxes, walls, cylinders)
+        if (obstacles && obstacles.length > 0) {
+          for (const obs of obstacles) {
+            if (!obs.userData) continue;
+            const oPos = obs.position;
+            const oType = obs.userData.type;
+
+            if (oType === 'cylinder') {
+              const cRadius = obs.userData.radius || 0.3;
+              const minSep = circleRadius + cRadius;
+              const dx = circle.x - oPos.x;
+              const dz = circle.z - oPos.z;
+              const dist = Math.hypot(dx, dz);
+
+              if (dist < minSep) {
+                const pushDist = minSep - dist + 0.002;
+                const px = (dist > 0.001) ? (dx / dist) * pushDist : pushDist;
+                const pz = (dist > 0.001) ? (dz / dist) * pushDist : 0;
+                resolvedX += px;
+                resolvedZ += pz;
+                totalPushX += px;
+                totalPushZ += pz;
               }
-            }
-          } else if (oType === 'box' || oType === 'wall') {
-            // Exact Oriented Bounding Box (OBB) 2D Collision Resolution
-            const halfW = (obs.userData.width || 0.6) / 2;
-            const halfD = (obs.userData.depth || 0.6) / 2;
-            const rotY = obs.rotation.y || 0;
+            } else if (oType === 'box' || oType === 'wall') {
+              const halfW = (obs.userData.width || 0.6) / 2;
+              const halfD = (obs.userData.depth || 0.6) / 2;
+              const rotY = obs.rotation.y || 0;
 
-            // Vector from box center to robot
-            const dx = resolvedX - oPos.x;
-            const dz = resolvedZ - oPos.z;
+              const dx = circle.x - oPos.x;
+              const dz = circle.z - oPos.z;
 
-            // Transform into box local coordinates by rotating by -rotY
-            const cosA = Math.cos(-rotY);
-            const sinA = Math.sin(-rotY);
-            const localX = dx * cosA - dz * sinA;
-            const localZ = dx * sinA + dz * cosA;
+              const cosA = Math.cos(-rotY);
+              const sinA = Math.sin(-rotY);
+              const localX = dx * cosA - dz * sinA;
+              const localZ = dx * sinA + dz * cosA;
 
-            // Find closest point on box in local space
-            const closestX = Math.max(-halfW, Math.min(halfW, localX));
-            const closestZ = Math.max(-halfD, Math.min(halfD, localZ));
+              const closestX = Math.max(-halfW, Math.min(halfW, localX));
+              const closestZ = Math.max(-halfD, Math.min(halfD, localZ));
 
-            // Distance from local robot center to closest point on box
-            const diffX = localX - closestX;
-            const diffZ = localZ - closestZ;
-            const localDist = Math.hypot(diffX, diffZ);
+              const diffX = localX - closestX;
+              const diffZ = localZ - closestZ;
+              const localDist = Math.hypot(diffX, diffZ);
 
-            if (localDist < robotRadius) {
-              let pushLocalX = 0;
-              let pushLocalZ = 0;
+              if (localDist < circleRadius) {
+                let pushLocalX = 0;
+                let pushLocalZ = 0;
 
-              if (localDist > 0.001) {
-                // Robot center is outside the box: push along closest-point normal
-                const pushDist = robotRadius - localDist + 0.003;
-                pushLocalX = (diffX / localDist) * pushDist;
-                pushLocalZ = (diffZ / localDist) * pushDist;
-              } else {
-                // Robot center is inside the box: push along the shallowest face
-                const penLeft = localX - (-halfW);
-                const penRight = halfW - localX;
-                const penBottom = localZ - (-halfD);
-                const penTop = halfD - localZ;
-                const minPen = Math.min(penLeft, penRight, penBottom, penTop);
-
-                if (minPen === penLeft) {
-                  pushLocalX = -(penLeft + robotRadius + 0.003);
-                } else if (minPen === penRight) {
-                  pushLocalX = penRight + robotRadius + 0.003;
-                } else if (minPen === penBottom) {
-                  pushLocalZ = -(penBottom + robotRadius + 0.003);
+                if (localDist > 0.001) {
+                  const pushDist = circleRadius - localDist + 0.002;
+                  pushLocalX = (diffX / localDist) * pushDist;
+                  pushLocalZ = (diffZ / localDist) * pushDist;
                 } else {
-                  pushLocalZ = penTop + robotRadius + 0.003;
+                  const penLeft = localX - (-halfW);
+                  const penRight = halfW - localX;
+                  const penBottom = localZ - (-halfD);
+                  const penTop = halfD - localZ;
+                  const minPen = Math.min(penLeft, penRight, penBottom, penTop);
+
+                  if (minPen === penLeft) {
+                    pushLocalX = -(penLeft + circleRadius + 0.002);
+                  } else if (minPen === penRight) {
+                    pushLocalX = penRight + circleRadius + 0.002;
+                  } else if (minPen === penBottom) {
+                    pushLocalZ = -(penBottom + circleRadius + 0.002);
+                  } else {
+                    pushLocalZ = penTop + circleRadius + 0.002;
+                  }
                 }
+
+                const cosB = Math.cos(rotY);
+                const sinB = Math.sin(rotY);
+                const pushWorldX = pushLocalX * cosB - pushLocalZ * sinB;
+                const pushWorldZ = pushLocalX * sinB + pushLocalZ * cosB;
+
+                resolvedX += pushWorldX;
+                resolvedZ += pushWorldZ;
+                totalPushX += pushWorldX;
+                totalPushZ += pushWorldZ;
               }
-
-              // Transform push vector back into world coordinates by rotating by +rotY
-              const cosB = Math.cos(rotY);
-              const sinB = Math.sin(rotY);
-              const pushWorldX = pushLocalX * cosB - pushLocalZ * sinB;
-              const pushWorldZ = pushLocalX * sinB + pushLocalZ * cosB;
-
-              resolvedX += pushWorldX;
-              resolvedZ += pushWorldZ;
             }
           }
         }
       }
     }
 
-    // Re-check arena boundary after obstacle push-out
-    const clampedFinal = clampArenaRect(resolvedX, resolvedZ);
+    // Velocity Normal Cancellation: Smooth Wall Sliding Physics
+    const pushMag = Math.hypot(totalPushX, totalPushZ);
+    if (pushMag > 0.002) {
+      const normX = totalPushX / pushMag;
+      const normZ = totalPushZ / pushMag;
+
+      // Robot velocity vector
+      const vx = forwardX * this.currentLinearSpeed;
+      const vz = forwardZ * this.currentLinearSpeed;
+      const vDotN = vx * normX + vz * normZ;
+
+      // If velocity is moving into the contact surface normal, cancel the penetrating normal component
+      if (vDotN < 0) {
+        const slideVx = vx - vDotN * normX;
+        const slideVz = vz - vDotN * normZ;
+        // Project slide velocity back onto robot forward heading with friction damping (0.88)
+        const forwardProjection = (slideVx * forwardX + slideVz * forwardZ);
+        this.currentLinearSpeed = Math.max(0, forwardProjection) * 0.88;
+      }
+    }
+
+    // Final boundary clamp
+    const clampedFinal = clampArenaRect(resolvedX, resolvedZ, 0.16);
     this.position.x = clampedFinal.x;
     this.position.z = clampedFinal.z;
 

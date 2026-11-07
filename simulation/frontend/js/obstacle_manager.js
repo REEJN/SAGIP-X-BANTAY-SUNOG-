@@ -108,6 +108,74 @@ class ObstacleManager {
     return Array.from(this.obstacles.values());
   }
 
+  getObstacle(id) {
+    return this.obstacles.get(id);
+  }
+
+  updateObstaclePosition(id, x, z) {
+    const mesh = this.obstacles.get(id);
+    if (!mesh) return;
+    mesh.position.x = x;
+    mesh.position.z = z;
+  }
+
+  updateObstacleRotation(id, rotationY) {
+    const mesh = this.obstacles.get(id);
+    if (!mesh) return;
+    mesh.rotation.y = rotationY;
+  }
+
+  updateObstacleDimensions(id, dims = {}) {
+    const mesh = this.obstacles.get(id);
+    if (!mesh || !mesh.userData) return;
+    const type = mesh.userData.type;
+
+    if (type === 'box' || type === 'wall') {
+      const width = dims.width !== undefined ? Math.max(0.2, Number(dims.width)) : mesh.userData.width;
+      const depth = dims.depth !== undefined ? Math.max(0.1, Number(dims.depth)) : mesh.userData.depth;
+      const height = dims.height !== undefined ? Math.max(0.2, Number(dims.height)) : mesh.userData.height;
+
+      mesh.geometry.dispose();
+      mesh.geometry = new THREE.BoxGeometry(width, height, depth);
+      mesh.userData.width = width;
+      mesh.userData.depth = depth;
+      mesh.userData.height = height;
+      mesh.position.y = height / 2;
+
+      // Update edge wireframe if present
+      const line = mesh.children.find(c => c instanceof THREE.LineSegments);
+      if (line) {
+        line.geometry.dispose();
+        line.geometry = new THREE.EdgesGeometry(mesh.geometry);
+      }
+    } else if (type === 'cylinder') {
+      const radius = dims.radius !== undefined ? Math.max(0.1, Number(dims.radius)) : mesh.userData.radius;
+      const height = dims.height !== undefined ? Math.max(0.2, Number(dims.height)) : mesh.userData.height;
+
+      mesh.geometry.dispose();
+      mesh.geometry = new THREE.CylinderGeometry(radius, radius, height, 24);
+      mesh.userData.radius = radius;
+      mesh.userData.height = height;
+      mesh.position.y = height / 2;
+    }
+  }
+
+  duplicateObstacle(id) {
+    const mesh = this.obstacles.get(id);
+    if (!mesh || !mesh.userData) return null;
+    const type = mesh.userData.type;
+    const offset = 0.6;
+
+    if (type === 'box') {
+      return this.createBox(mesh.position.x + offset, mesh.position.z + offset, mesh.userData.width, mesh.userData.height, mesh.userData.depth, mesh.rotation.y);
+    } else if (type === 'wall') {
+      return this.createWall(mesh.position.x + offset, mesh.position.z + offset, mesh.userData.width, mesh.userData.height, mesh.userData.depth, mesh.rotation.y);
+    } else if (type === 'cylinder') {
+      return this.createCylinder(mesh.position.x + offset, mesh.position.z + offset, mesh.userData.radius, mesh.userData.height);
+    }
+    return null;
+  }
+
   /**
    * Set up standard realistic test room obstacle layout.
    */
@@ -119,6 +187,105 @@ class ObstacleManager {
     this.createWall(0.0, 2.5, 2.0, 0.5, 0.15, 0);
     this.createWall(-1.8, -1.8, 1.5, 0.5, 0.15, Math.PI / 3);
     this.createCylinder(1.8, 1.8, 0.3, 0.7);
+  }
+
+  /**
+   * 4-Room Multi-Room Floorplan with connecting central corridor & doorways.
+   * Room 1: Living Area (South-West)
+   * Room 2: Office (North-West)
+   * Room 3: Kitchen (South-East)
+   * Room 4: Storage (North-East)
+   */
+  loadMultiRoomLayout() {
+    this.clearAll();
+    const wallH = 0.65;
+    const wallThick = 0.16;
+
+    // 1. Central Hallway Spine Walls (running along Z = -4.2 to +4.2 with 0.80m doorways)
+    // West Hallway Wall (X = -0.85)
+    this.createWall(-0.85, 3.4, 1.4, wallH, wallThick, Math.PI / 2);     // North segment
+    // Doorway gap at Z = 2.3 (width 0.80m)
+    this.createWall(-0.85, 1.0, 1.8, wallH, wallThick, Math.PI / 2);     // Mid-North segment
+    this.createWall(-0.85, -1.0, 1.8, wallH, wallThick, Math.PI / 2);    // Mid-South segment
+    // Doorway gap at Z = -2.3 (width 0.80m)
+    this.createWall(-0.85, -3.4, 1.4, wallH, wallThick, Math.PI / 2);    // South segment
+
+    // East Hallway Wall (X = +0.85)
+    this.createWall(0.85, 3.4, 1.4, wallH, wallThick, Math.PI / 2);      // North segment
+    // Doorway gap at Z = 2.3 (width 0.80m)
+    this.createWall(0.85, 1.0, 1.8, wallH, wallThick, Math.PI / 2);      // Mid-North segment
+    this.createWall(0.85, -1.0, 1.8, wallH, wallThick, Math.PI / 2);     // Mid-South segment
+    // Doorway gap at Z = -2.3 (width 0.80m)
+    this.createWall(0.85, -3.4, 1.4, wallH, wallThick, Math.PI / 2);     // South segment
+
+    // 2. Horizontal Room Dividers (along Z = 0)
+    // Divides NW Office from SW Living Room
+    this.createWall(-2.55, 0.0, 3.4, wallH, wallThick, 0);
+    // Divides NE Storage from SE Kitchen
+    this.createWall(2.55, 0.0, 3.4, wallH, wallThick, 0);
+
+    // 3. Realistic Interior Furnishings / Obstacles
+    // SW Living Room
+    this.createBox(-2.6, -2.4, 0.8, 0.5, 0.8, 0.1);
+    this.createCylinder(-3.2, -1.2, 0.28, 0.65);
+    // NW Office
+    this.createBox(-2.5, 2.5, 1.0, 0.5, 0.6, 0.2);
+    this.createBox(-3.2, 1.2, 0.5, 0.5, 0.5, 0);
+    // SE Kitchen
+    this.createBox(2.6, -2.4, 0.9, 0.5, 0.7, -0.3);
+    this.createCylinder(3.2, -1.2, 0.3, 0.7);
+    // NE Storage
+    this.createBox(2.4, 2.6, 0.7, 0.6, 0.7, 0.4);
+    this.createBox(3.2, 1.4, 0.6, 0.5, 0.6, -0.2);
+    this.createCylinder(2.0, 1.5, 0.28, 0.65);
+  }
+
+  /**
+   * Search & Rescue Labyrinth Maze Layout.
+   * Challenging layout with corridors, 90° bends, and dead ends for robust autonomous navigation.
+   */
+  loadMazeLayout() {
+    this.clearAll();
+    const wallH = 0.65;
+    const wallThick = 0.16;
+
+    // Perimeter entry & outer baffles
+    this.createWall(0.0, -3.0, 5.0, wallH, wallThick, 0);
+    this.createWall(-2.6, -1.8, 2.4, wallH, wallThick, Math.PI / 2);
+    this.createWall(2.6, -1.8, 2.4, wallH, wallThick, Math.PI / 2);
+
+    // Middle labyrinth dividers with staggered openings
+    this.createWall(-1.2, -0.6, 3.4, wallH, wallThick, 0);
+    this.createWall(2.0, -0.6, 2.6, wallH, wallThick, 0);
+
+    // Center vertical spine
+    this.createWall(0.4, 0.8, 2.8, wallH, wallThick, Math.PI / 2);
+    this.createWall(-1.8, 1.2, 2.4, wallH, wallThick, Math.PI / 2);
+
+    // North corridors
+    this.createWall(-0.5, 2.2, 4.2, wallH, wallThick, 0);
+    this.createWall(2.5, 1.8, 2.0, wallH, wallThick, Math.PI / 2);
+    this.createWall(1.5, 3.2, 3.0, wallH, wallThick, 0);
+
+    // Dispersed obstacles within corridors
+    this.createBox(-3.0, 0.4, 0.55, 0.5, 0.55, 0.2);
+    this.createCylinder(1.6, 0.4, 0.28, 0.65);
+    this.createBox(-0.8, -1.8, 0.5, 0.5, 0.5, 0.1);
+    this.createCylinder(3.2, -2.2, 0.3, 0.65);
+  }
+
+  /**
+   * Switch between arena environments.
+   * @param {string} layoutName - 'arena', 'multi-room', 'maze'
+   */
+  setLayout(layoutName) {
+    if (layoutName === 'multi-room') {
+      this.loadMultiRoomLayout();
+    } else if (layoutName === 'maze') {
+      this.loadMazeLayout();
+    } else {
+      this.loadDefaultLayout();
+    }
   }
 
   /**

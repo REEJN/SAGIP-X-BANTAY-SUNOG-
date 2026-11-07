@@ -176,16 +176,159 @@ class SimWorld {
     this.mouse = new THREE.Vector2();
     this.placementMode = null; // 'fire', 'box', 'wall', 'cylinder'
 
+    // Interactive Sandbox Selection & Dragging
+    this.selectedObstacle = null;
+    this.selectionBox = null;
+    this.isDraggingObstacle = false;
+    this.dragPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+    this.dragOffset = new THREE.Vector3();
+
     this.renderer.domElement.addEventListener('pointerdown', (e) => this.onPointerDown(e), false);
+    this.renderer.domElement.addEventListener('pointermove', (e) => this.onPointerMove(e), false);
+    window.addEventListener('pointerup', () => this.onPointerUp(), false);
   }
 
   setPlacementMode(mode) {
     this.placementMode = mode;
+    if (mode) this.deselectObstacle();
     this.renderer.domElement.style.cursor = mode ? 'crosshair' : 'default';
   }
 
+  selectObstacle(mesh) {
+    if (!mesh || !mesh.userData) return;
+    this.selectedObstacle = mesh;
+
+    if (this.selectionBox) {
+      this.scene.remove(this.selectionBox);
+    }
+    this.selectionBox = new THREE.BoxHelper(mesh, 0x00f0ff);
+    this.selectionBox.material.depthTest = false;
+    this.selectionBox.material.transparent = true;
+    this.selectionBox.material.opacity = 0.9;
+    this.selectionBox.renderOrder = 999;
+    this.scene.add(this.selectionBox);
+
+    if (this.onObstacleSelected) {
+      this.onObstacleSelected(mesh);
+    }
+  }
+
+  deselectObstacle() {
+    if (this.selectionBox) {
+      this.scene.remove(this.selectionBox);
+      this.selectionBox = null;
+    }
+    const hadSelection = !!this.selectedObstacle;
+    this.selectedObstacle = null;
+    this.isDraggingObstacle = false;
+    if (this.controls) this.controls.enabled = true;
+
+    if (hadSelection && this.onObstacleDeselected) {
+      this.onObstacleDeselected();
+    }
+  }
+
+  updateSelectionHelper() {
+    if (this.selectionBox && this.selectedObstacle) {
+      this.selectionBox.update();
+    }
+  }
+
+  setLayout(layoutName) {
+    this.deselectObstacle();
+    this.obstacleManager.setLayout(layoutName);
+    this.fireSystem.clearAllFires();
+
+    if (layoutName === 'multi-room') {
+      // Reposition robot at South entry corridor
+      this.robot.reset(0.0, -3.8, 0);
+      // Spawn test fire inside North-East room
+      this.fireSystem.spawnFire(2.6, 2.6, 1.0);
+    } else if (layoutName === 'maze') {
+      // Reposition robot at bottom maze entrance
+      this.robot.reset(0.0, -4.0, 0);
+      // Spawn test fire deep inside northern corridor
+      this.fireSystem.spawnFire(1.5, 2.8, 1.0);
+    } else {
+      // Open arena default
+      this.robot.reset(0, 0, 0);
+      this.fireSystem.spawnFire(0.0, 1.5, 1.0);
+    }
+
+    if (this.onLayoutChanged) {
+      this.onLayoutChanged(layoutName);
+    }
+  }
+
   onPointerDown(e) {
-    if (!this.placementMode) return;
+    const rect = this.renderer.domElement.getBoundingClientRect();
+    this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+    this.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+    this.raycaster.setFromCamera(this.mouse, this.camera);
+
+    // 1. If in placement mode: drop object on floor
+    if (this.placementMode) {
+      const intersects = this.raycaster.intersectObject(this.floor);
+      if (intersects.length > 0) {
+        const pt = intersects[0].point;
+        const x = Math.round(pt.x * 10) / 10;
+        const z = Math.round(pt.z * 10) / 10;
+
+        if (this.placementMode === 'fire') {
+          this.fireSystem.spawnFire(x, z, 1.0);
+          if (this.onFireSpawned) this.onFireSpawned();
+        } else if (this.placementMode === 'box') {
+          const m = this.obstacleManager.createBox(x, z);
+          this.selectObstacle(m);
+        } else if (this.placementMode === 'wall') {
+          const m = this.obstacleManager.createWall(x, z);
+          this.selectObstacle(m);
+        } else if (this.placementMode === 'cylinder') {
+          const m = this.obstacleManager.createCylinder(x, z);
+          this.selectObstacle(m);
+        }
+
+        this.setPlacementMode(null);
+        if (this.onPlacementComplete) this.onPlacementComplete();
+      }
+      return;
+    }
+
+    // 2. Not in placement mode: check for obstacle selection & dragging
+    const meshes = this.obstacleManager.getRaycastMeshes();
+    const hits = this.raycaster.intersectObjects(meshes, true);
+
+    if (hits.length > 0) {
+      // Find root obstacle mesh
+      let hitMesh = hits[0].object;
+      while (hitMesh.parent && !hitMesh.userData.id && hitMesh.parent !== this.scene) {
+        hitMesh = hitMesh.parent;
+      }
+
+      if (hitMesh && hitMesh.userData.id) {
+        this.selectObstacle(hitMesh);
+        this.isDraggingObstacle = true;
+        if (this.controls) this.controls.enabled = false;
+
+        const floorIntersects = this.raycaster.intersectObject(this.floor);
+        if (floorIntersects.length > 0) {
+          this.dragOffset.copy(floorIntersects[0].point).sub(hitMesh.position);
+          this.dragOffset.y = 0;
+        }
+        return;
+      }
+    }
+
+    // 3. Clicked empty floor: deselect
+    const floorHits = this.raycaster.intersectObject(this.floor);
+    if (floorHits.length > 0 && !this.isDraggingObstacle) {
+      this.deselectObstacle();
+    }
+  }
+
+  onPointerMove(e) {
+    if (!this.isDraggingObstacle || !this.selectedObstacle) return;
 
     const rect = this.renderer.domElement.getBoundingClientRect();
     this.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
@@ -196,23 +339,28 @@ class SimWorld {
 
     if (intersects.length > 0) {
       const pt = intersects[0].point;
-      const x = Math.round(pt.x * 10) / 10;
-      const z = Math.round(pt.z * 10) / 10;
+      const newX = Math.round((pt.x - this.dragOffset.x) * 10) / 10;
+      const newZ = Math.round((pt.z - this.dragOffset.z) * 10) / 10;
 
-      if (this.placementMode === 'fire') {
-        this.fireSystem.spawnFire(x, z, 1.0);
-        if (this.onFireSpawned) this.onFireSpawned();
-      } else if (this.placementMode === 'box') {
-        this.obstacleManager.createBox(x, z);
-      } else if (this.placementMode === 'wall') {
-        this.obstacleManager.createWall(x, z);
-      } else if (this.placementMode === 'cylinder') {
-        this.obstacleManager.createCylinder(x, z);
+      // Clamp within arena boundaries
+      const maxBound = (this.arenaWidth / 2) - 0.4;
+      const clampedX = Math.max(-maxBound, Math.min(maxBound, newX));
+      const clampedZ = Math.max(-maxBound, Math.min(maxBound, newZ));
+
+      this.obstacleManager.updateObstaclePosition(this.selectedObstacle.userData.id, clampedX, clampedZ);
+      this.updateSelectionHelper();
+
+      if (this.onObstacleModified) {
+        this.onObstacleModified(this.selectedObstacle);
       }
+    }
+  }
 
-      // Reset placement mode after placing
-      this.setPlacementMode(null);
-      if (this.onPlacementComplete) this.onPlacementComplete();
+  onPointerUp() {
+    if (this.isDraggingObstacle) {
+      this.isDraggingObstacle = false;
+      if (this.controls) this.controls.enabled = true;
+      this.updateSelectionHelper();
     }
   }
 

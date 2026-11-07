@@ -34,6 +34,7 @@ class SensorSimulator {
 
     // Attach camera to robot tilt mount facing forward along optical axis (+Z)
     this.virtualCamera.rotation.y = Math.PI;
+    this.virtualCamera.scale.x = -1; // Un-invert horizontal view so screen right matches world right
     this.robot.cameraMount.add(this.virtualCamera);
 
     // -------------------------------------------------------------------------
@@ -224,8 +225,8 @@ class SensorSimulator {
             const screenPos = fireCenter.clone().project(this.virtualCamera);
             // screenPos.x and screenPos.y are in [-1, 1] NDC
             if (screenPos.z > 0 && screenPos.z < 1) {
-              const normX = (1 - screenPos.x) / 2; // Inverted for forward camera horizontal mirroring
-              const normY = (1 - screenPos.y) / 2; // Inverted Y for image coords
+              const normX = (screenPos.x + 1) / 2; // True optical coordinates (0.0=left, 1.0=right)
+              const normY = (1 - screenPos.y) / 2; // Top-down image Y (0.0=top, 1.0=bottom)
 
               // Estimate bounding box in 640x480 pixel space
               const boxScale = Math.min(220, Math.max(30, 180 / dist));

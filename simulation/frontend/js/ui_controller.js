@@ -15,6 +15,7 @@ class UIController {
 
     // Modes: 'neural' (TinyML navigation policy), 'sil' (Legacy Rule-Based FSM), 'teleop' (Manual WASD), 'sim2hw', 'hw2sim'
     this.syncMode = 'neural';
+    this.sim2hwPolicy = 'neural'; // 'neural', 'sil', 'teleop' for Sim2HW dispatch
     this.navModel = (typeof NavModelRunner !== 'undefined') ? new NavModelRunner() : null;
 
     // Simulated FSM State (matches bantay_sunog_esp32 types.h)
@@ -140,13 +141,173 @@ class UIController {
       this.stateTimer = 0;
     });
 
+    // Environment Layout Selector
+    const layoutSelect = document.getElementById('select-arena-layout');
+    if (layoutSelect) {
+      layoutSelect.addEventListener('change', (e) => {
+        const layout = e.target.value;
+        this.sim.setLayout(layout);
+        this.robotState = 'SEARCHING';
+        this.scanPhase = 'SWEEP';
+        this.phaseTimer = 0;
+        this.stateTimer = 0;
+      });
+    }
+
+    // Obstacle Inspector Card Wiring
+    const inspectorCard = document.getElementById('obstacle-inspector-card');
+    const inpObsId = document.getElementById('inspector-obs-id');
+    const inpX = document.getElementById('inp-obs-x');
+    const inpZ = document.getElementById('inp-obs-z');
+    const boxDims = document.getElementById('inspector-box-dims');
+    const cylDims = document.getElementById('inspector-cyl-dims');
+    const inpW = document.getElementById('inp-obs-w');
+    const inpD = document.getElementById('inp-obs-d');
+    const inpR = document.getElementById('inp-obs-r');
+    const inpH = document.getElementById('inp-obs-h');
+    const inpRot = document.getElementById('inp-obs-rot');
+    const txtRot = document.getElementById('txt-obs-rot');
+    const btnDup = document.getElementById('btn-obs-duplicate');
+    const btnDel = document.getElementById('btn-obs-delete');
+    const btnDeselect = document.getElementById('btn-obs-deselect');
+
+    const updateInspectorUI = (mesh) => {
+      if (!mesh || !mesh.userData) return;
+      const d = mesh.userData;
+      if (inpObsId) inpObsId.textContent = `#${d.id} ${d.type.toUpperCase()}`;
+      if (inpX) inpX.value = mesh.position.x.toFixed(2);
+      if (inpZ) inpZ.value = mesh.position.z.toFixed(2);
+
+      const deg = Math.round(((mesh.rotation.y * 180 / Math.PI) % 360 + 360) % 360);
+      if (inpRot) inpRot.value = deg;
+      if (txtRot) txtRot.textContent = `${deg}°`;
+
+      if (d.type === 'cylinder') {
+        if (boxDims) boxDims.style.display = 'none';
+        if (cylDims) cylDims.style.display = 'block';
+        if (inpR) inpR.value = (d.radius || 0.35).toFixed(2);
+        if (inpH) inpH.value = (d.height || 0.8).toFixed(2);
+      } else {
+        if (boxDims) boxDims.style.display = 'flex';
+        if (cylDims) cylDims.style.display = 'none';
+        if (inpW) inpW.value = (d.width || 0.6).toFixed(2);
+        if (inpD) inpD.value = (d.depth || 0.6).toFixed(2);
+        if (inpH) inpH.value = (d.height || 0.5).toFixed(2);
+      }
+    };
+
+    this.sim.onObstacleSelected = (mesh) => {
+      if (inspectorCard) inspectorCard.style.display = 'block';
+      updateInspectorUI(mesh);
+    };
+
+    this.sim.onObstacleDeselected = () => {
+      if (inspectorCard) inspectorCard.style.display = 'none';
+    };
+
+    this.sim.onObstacleModified = (mesh) => {
+      updateInspectorUI(mesh);
+    };
+
+    if (inpX && inpZ) {
+      const onPosChange = () => {
+        if (this.sim.selectedObstacle) {
+          const id = this.sim.selectedObstacle.userData.id;
+          const x = parseFloat(inpX.value) || 0;
+          const z = parseFloat(inpZ.value) || 0;
+          this.obstacleManager.updateObstaclePosition(id, x, z);
+          if (this.sim.selectionHelper) this.sim.selectionHelper.update();
+        }
+      };
+      inpX.addEventListener('input', onPosChange);
+      inpZ.addEventListener('input', onPosChange);
+    }
+
+    const onDimsChange = () => {
+      if (this.sim.selectedObstacle) {
+        const id = this.sim.selectedObstacle.userData.id;
+        const dims = {
+          width: inpW ? parseFloat(inpW.value) : undefined,
+          depth: inpD ? parseFloat(inpD.value) : undefined,
+          height: inpH ? parseFloat(inpH.value) : undefined,
+          radius: inpR ? parseFloat(inpR.value) : undefined
+        };
+        this.obstacleManager.updateObstacleDimensions(id, dims);
+        if (this.sim.selectionHelper) this.sim.selectionHelper.update();
+      }
+    };
+    if (inpW) inpW.addEventListener('input', onDimsChange);
+    if (inpD) inpD.addEventListener('input', onDimsChange);
+    if (inpR) inpR.addEventListener('input', onDimsChange);
+    if (inpH) inpH.addEventListener('input', onDimsChange);
+
+    if (inpRot) {
+      inpRot.addEventListener('input', () => {
+        if (this.sim.selectedObstacle) {
+          const id = this.sim.selectedObstacle.userData.id;
+          const deg = parseFloat(inpRot.value) || 0;
+          const rad = deg * Math.PI / 180;
+          if (txtRot) txtRot.textContent = `${deg}°`;
+          this.obstacleManager.updateObstacleRotation(id, rad);
+          if (this.sim.selectionHelper) this.sim.selectionHelper.update();
+        }
+      });
+    }
+
+    if (btnDup) {
+      btnDup.addEventListener('click', () => {
+        if (this.sim.selectedObstacle) {
+          const newMesh = this.obstacleManager.duplicateObstacle(this.sim.selectedObstacle.userData.id);
+          if (newMesh) {
+            this.sim.selectObstacle(newMesh);
+          }
+        }
+      });
+    }
+
+    if (btnDel) {
+      btnDel.addEventListener('click', () => {
+        if (this.sim.selectedObstacle) {
+          this.obstacleManager.removeObstacle(this.sim.selectedObstacle.userData.id);
+          this.sim.deselectObstacle();
+        }
+      });
+    }
+
+    if (btnDeselect) {
+      btnDeselect.addEventListener('click', () => {
+        this.sim.deselectObstacle();
+      });
+    }
+
     // Sync Mode Radio Buttons
+    const sim2hwGroup = document.getElementById('sim2hw-policy-group');
     document.querySelectorAll('.mode-radio').forEach((radio) => {
       radio.addEventListener('click', () => {
         document.querySelectorAll('.mode-radio').forEach(r => r.classList.remove('selected'));
         radio.classList.add('selected');
         this.syncMode = radio.dataset.mode;
+        if (sim2hwGroup) {
+          sim2hwGroup.style.display = (this.syncMode === 'sim2hw') ? 'block' : 'none';
+        }
         console.log(`[UI] Sync Mode Changed: ${this.syncMode}`);
+      });
+    });
+
+    // Sim2HW Policy Pills
+    document.querySelectorAll('.policy-pill').forEach((pill) => {
+      pill.addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.policy-pill').forEach(p => {
+          p.classList.remove('active');
+          p.style.background = 'rgba(255,255,255,0.1)';
+          p.style.color = '#fff';
+        });
+        pill.classList.add('active');
+        pill.style.background = 'var(--accent-cyan)';
+        pill.style.color = '#000';
+        this.sim2hwPolicy = pill.dataset.policy;
+        console.log(`[UI] Sim2HW Policy Changed: ${this.sim2hwPolicy}`);
       });
     });
 
@@ -194,20 +355,41 @@ class UIController {
   }
 
   bindKeyboard() {
+    const keyMap = {
+      'ArrowUp': 'KeyW',
+      'ArrowDown': 'KeyS',
+      'ArrowLeft': 'KeyA',
+      'ArrowRight': 'KeyD'
+    };
+
     window.addEventListener('keydown', (e) => {
-      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyU', 'KeyJ', 'KeyH', 'KeyF'].includes(e.code)) {
-        this.activeKeys.add(e.code);
-        const btn = document.querySelector(`.key-btn[data-key="${e.code}"]`);
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+      const code = keyMap[e.code] || e.code;
+      if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyU', 'KeyJ', 'KeyH', 'KeyF'].includes(code)) {
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+          e.preventDefault();
+        }
+        this.activeKeys.add(code);
+        const btn = document.querySelector(`.key-btn[data-key="${code}"]`);
         if (btn) btn.classList.add('pressed');
       }
     });
 
     window.addEventListener('keyup', (e) => {
-      if (this.activeKeys.has(e.code)) {
-        this.activeKeys.delete(e.code);
-        const btn = document.querySelector(`.key-btn[data-key="${e.code}"]`);
+      if (['INPUT', 'SELECT', 'TEXTAREA'].includes(e.target.tagName)) return;
+
+      const code = keyMap[e.code] || e.code;
+      if (this.activeKeys.has(code)) {
+        this.activeKeys.delete(code);
+        const btn = document.querySelector(`.key-btn[data-key="${code}"]`);
         if (btn) btn.classList.remove('pressed');
       }
+    });
+
+    window.addEventListener('blur', () => {
+      this.activeKeys.clear();
+      document.querySelectorAll('.key-btn').forEach(btn => btn.classList.remove('pressed'));
     });
   }
 
@@ -396,7 +578,13 @@ class UIController {
     } else if (this.syncMode === 'sil') {
       this.runAutonomousSilFsm(dt, telem);
     } else if (this.syncMode === 'sim2hw') {
-      this.handleTeleopControls();
+      if (this.sim2hwPolicy === 'neural') {
+        this.runNeuralSilNavigation(dt, telem);
+      } else if (this.sim2hwPolicy === 'sil') {
+        this.runAutonomousSilFsm(dt, telem);
+      } else {
+        this.handleTeleopControls();
+      }
     }
 
     // 3. Visualization & Telemetry Broadcast
@@ -453,12 +641,12 @@ class UIController {
 
     this.robot.setMotorPwm(left, right);
 
-    // Tilt controls
+    // Tilt controls with smooth rate limiting
     if (this.activeKeys.has('KeyU')) {
-      this.robot.setTiltAngle(this.robot.tiltAngleDeg + 1);
+      this.robot.setTiltAngle(Math.min(135, this.robot.tiltAngleDeg + 1.2));
     }
     if (this.activeKeys.has('KeyJ')) {
-      this.robot.setTiltAngle(this.robot.tiltAngleDeg - 1);
+      this.robot.setTiltAngle(Math.max(45, this.robot.tiltAngleDeg - 1.2));
     }
     if (this.activeKeys.has('KeyH')) {
       this.robot.setTiltAngle(90);

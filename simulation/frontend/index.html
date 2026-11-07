@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BANTAY-SUNOG 3D Digital Twin Simulator</title>
-  <link rel="stylesheet" href="css/dashboard.css">
+  <link rel="stylesheet" href="css/dashboard.css?v=2">
   <!-- Three.js & Controls from trusted CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -68,6 +68,14 @@
         <span>Arena Environment</span>
         <span class="panel-subtitle">Interactive Control</span>
       </div>
+      <div class="layout-selector-row" style="margin-bottom: 8px;">
+        <label for="select-arena-layout" style="font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 3px;">Environment Layout:</label>
+        <select id="select-arena-layout" class="layout-dropdown" style="width: 100%; padding: 6px 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--border-color); color: #fff; border-radius: 4px; font-size: 12px; font-family: inherit;">
+          <option value="arena">🏟️ Open Training Arena (Default)</option>
+          <option value="multi-room">🏢 Multi-Room Facility (4 Rooms + Corridor)</option>
+          <option value="maze">🧩 Search & Rescue Labyrinth Maze</option>
+        </select>
+      </div>
       <div class="tool-grid">
         <button id="btn-add-fire" class="btn-tool fire">🔥 Add Fire</button>
         <button id="btn-add-box" class="btn-tool">📦 Add Crate</button>
@@ -77,6 +85,61 @@
         <button id="btn-randomize-arena" class="btn-tool">🎲 Randomize</button>
       </div>
       <button id="btn-reset-robot" class="btn-tool" style="width: 100%; margin-top: 8px;">🔄 Reset Robot to Origin</button>
+    </div>
+
+    <!-- Obstacle Sandbox Inspector (Shows when an obstacle is selected) -->
+    <div id="obstacle-inspector-card" class="panel-card" style="display: none; border-color: rgba(0, 240, 255, 0.4);">
+      <div class="panel-title">
+        <span>Obstacle Inspector</span>
+        <span id="inspector-obs-id" class="panel-subtitle" style="color: var(--accent-cyan);">#1 Box</span>
+      </div>
+      <div class="inspector-controls" style="display: flex; flex-direction: column; gap: 6px; font-size: 11px;">
+        <div style="display: flex; gap: 8px;">
+          <div style="flex: 1;">
+            <label style="color: var(--text-dim); display: block;">Pos X (m):</label>
+            <input type="number" id="inp-obs-x" step="0.1" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+          </div>
+          <div style="flex: 1;">
+            <label style="color: var(--text-dim); display: block;">Pos Z (m):</label>
+            <input type="number" id="inp-obs-z" step="0.1" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+          </div>
+        </div>
+
+        <div id="inspector-box-dims" style="display: flex; gap: 8px;">
+          <div style="flex: 1;">
+            <label style="color: var(--text-dim); display: block;">Width (m):</label>
+            <input type="number" id="inp-obs-w" step="0.1" min="0.2" max="8.0" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+          </div>
+          <div style="flex: 1;">
+            <label style="color: var(--text-dim); display: block;">Depth (m):</label>
+            <input type="number" id="inp-obs-d" step="0.1" min="0.1" max="8.0" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+          </div>
+        </div>
+
+        <div id="inspector-cyl-dims" style="display: none;">
+          <div>
+            <label style="color: var(--text-dim); display: block;">Radius (m):</label>
+            <input type="number" id="inp-obs-r" step="0.05" min="0.1" max="2.5" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 8px;">
+          <div style="flex: 1;">
+            <label style="color: var(--text-dim); display: block;">Height (m):</label>
+            <input type="number" id="inp-obs-h" step="0.05" min="0.2" max="2.5" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+          </div>
+          <div style="flex: 1;">
+            <label style="color: var(--text-dim); display: block;">Yaw (°): <span id="txt-obs-rot" style="color: var(--accent-cyan);">0°</span></label>
+            <input type="range" id="inp-obs-rot" min="0" max="360" value="0" style="width: 100%;">
+          </div>
+        </div>
+
+        <div style="display: flex; gap: 6px; margin-top: 4px;">
+          <button id="btn-obs-duplicate" class="btn-tool" style="flex: 1;">📋 Duplicate</button>
+          <button id="btn-obs-delete" class="btn-tool danger" style="flex: 1;">🗑️ Delete</button>
+          <button id="btn-obs-deselect" class="btn-tool" style="flex: 1;">✕ Close</button>
+        </div>
+      </div>
     </div>
 
     <!-- Digital Twin Synchronization Modes -->
@@ -111,6 +174,12 @@
           <div class="mode-info">
             <span class="mode-name">💻 Sim ➔ Physical Hardware</span>
             <span class="mode-desc">Simulated robot commands drive the physical ESP32 motors & tilt servo</span>
+            <div id="sim2hw-policy-group" class="sim2hw-policy-group" style="display: none; margin-top: 6px; padding: 4px 6px; background: rgba(0,0,0,0.3); border-radius: 4px;">
+              <span style="font-size: 10px; color: var(--text-dim); margin-right: 4px;">Drive Policy:</span>
+              <button class="policy-pill active" data-policy="neural" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: var(--accent-cyan); color: #000; border: none; cursor: pointer;">🧠 Neural TinyML</button>
+              <button class="policy-pill" data-policy="sil" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: rgba(255,255,255,0.1); color: #fff; border: none; cursor: pointer; margin-left: 2px;">🤖 Rule-Based SIL</button>
+              <button class="policy-pill" data-policy="teleop" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: rgba(255,255,255,0.1); color: #fff; border: none; cursor: pointer; margin-left: 2px;">🎮 Teleop</button>
+            </div>
           </div>
         </div>
 
@@ -248,14 +317,14 @@
 
   <!-- Application Initialization -->
   <script src="js/fire_system.js"></script>
-  <script src="js/obstacle_manager.js"></script>
-  <script src="js/robot_model.js"></script>
-  <script src="js/sensor_simulator.js"></script>
-  <script src="js/asset_loader.js"></script>
-  <script src="js/ultrasonic_mapper.js"></script>
-  <script src="js/nav_model_runner.js"></script>
-  <script src="js/sim_world.js"></script>
-  <script src="js/ui_controller.js"></script>
+  <script src="js/obstacle_manager.js?v=2"></script>
+  <script src="js/robot_model.js?v=2"></script>
+  <script src="js/sensor_simulator.js?v=3"></script>
+  <script src="js/asset_loader.js?v=2"></script>
+  <script src="js/ultrasonic_mapper.js?v=2"></script>
+  <script src="js/nav_model_runner.js?v=2"></script>
+  <script src="js/sim_world.js?v=2"></script>
+  <script src="js/ui_controller.js?v=2"></script>
   <script>
     window.addEventListener('DOMContentLoaded', () => {
       const container = document.getElementById('canvas-container');
