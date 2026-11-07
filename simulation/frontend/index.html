@@ -263,6 +263,8 @@
 
       const simWorld = new SimWorld(container, pipCanvas);
       const uiController = new UIController(simWorld);
+      window.simWorld = simWorld;
+      window.uiController = uiController;
 
       // Render Loop
       function animate() {

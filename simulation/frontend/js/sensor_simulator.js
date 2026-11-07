@@ -64,6 +64,7 @@ class SensorSimulator {
         opacity: 0.85
       });
       const line = new THREE.Line(geo, mat);
+      line.layers.set(1);
       this.scene.add(line);
       this.rayVisuals[key] = { line, material: mat };
     });
@@ -301,10 +302,30 @@ class SensorSimulator {
   }
 
   renderPip() {
-    // Hide ray visualizers in camera view so robot's camera sees realistic clean world
+    // 1. Hide ray visualizers and prediction path so robot's camera sees only realistic clean world
     Object.values(this.rayVisuals).forEach(v => v.line.visible = false);
+
+    // Hide prediction path from virtual camera
+    if (this.predictionPath) {
+      this.predictionPath.setVisible(false);
+    }
+    const predGroup = this.scene.getObjectByName('PredictionPathGroup');
+    const wasPredVisible = predGroup ? predGroup.visible : false;
+    if (predGroup) predGroup.visible = false;
+
+    // Ensure virtual camera only sees Layer 0 (physical scene entities)
+    this.virtualCamera.layers.set(0);
+
     this.pipRenderer.render(this.scene, this.virtualCamera);
+
+    // 2. Restore visibility for main observer view
     Object.values(this.rayVisuals).forEach(v => v.line.visible = true);
+    if (this.predictionPath) {
+      this.predictionPath.setVisible(true);
+    }
+    if (predGroup && wasPredVisible) {
+      predGroup.visible = true;
+    }
   }
 
   getTelemetry() {

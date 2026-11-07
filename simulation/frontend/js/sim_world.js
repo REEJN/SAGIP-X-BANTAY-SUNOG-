@@ -39,6 +39,7 @@ class SimWorld {
       100.0
     );
     this.camera.position.set(0, 5.5, 6.5);
+    this.camera.layers.enable(1); // Enable Layer 1 for debug/AR visualizers on main camera
 
     // Renderer
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -164,6 +165,7 @@ class SimWorld {
 
     // Prediction Path Visualizer
     this.predictionPath = new PredictionPath(this.scene);
+    this.sensors.predictionPath = this.predictionPath;
 
     // Spawn 1 initial test fire in open central lane
     this.fireSystem.spawnFire(0.0, 1.2, 1.0);
@@ -285,6 +287,10 @@ class PredictionPath {
   constructor(scene) {
     this.scene = scene;
     this.maxPoints = 50;
+    this.hasPoints = false;
+
+    this.group = new THREE.Group();
+    this.group.name = 'PredictionPathGroup';
 
     const positions = new Float32Array(this.maxPoints * 3);
     this.geometry = new THREE.BufferGeometry();
@@ -299,7 +305,7 @@ class PredictionPath {
 
     this.line = new THREE.Line(this.geometry, this.material);
     this.line.frustumCulled = false;
-    this.scene.add(this.line);
+    this.group.add(this.line);
 
     // Waypoint dot beads
     const dotPositions = new Float32Array(this.maxPoints * 3);
@@ -313,7 +319,7 @@ class PredictionPath {
     });
     this.dots = new THREE.Points(this.dotGeometry, this.dotMaterial);
     this.dots.frustumCulled = false;
-    this.scene.add(this.dots);
+    this.group.add(this.dots);
 
     // Target destination ring
     const ringGeo = new THREE.RingGeometry(0.06, 0.12, 16);
@@ -321,20 +327,40 @@ class PredictionPath {
     this.ringMat = new THREE.MeshBasicMaterial({ color: 0x00d2ff, side: THREE.DoubleSide });
     this.tipRing = new THREE.Mesh(ringGeo, this.ringMat);
     this.tipRing.position.y = 0.015;
-    this.scene.add(this.tipRing);
+    this.group.add(this.tipRing);
+
+    // Assign to Layer 1 (UI/Debug Overlays) so Virtual Webcam only sees real Layer 0 physical world
+    this.line.layers.set(1);
+    this.dots.layers.set(1);
+    this.tipRing.layers.set(1);
+    this.group.layers.set(1);
+
+    this.scene.add(this.group);
+  }
+
+  setVisible(visible) {
+    if (!visible) {
+      this.group.visible = false;
+      this.line.visible = false;
+      this.dots.visible = false;
+      this.tipRing.visible = false;
+    } else if (this.hasPoints) {
+      this.group.visible = true;
+      this.line.visible = true;
+      this.dots.visible = true;
+      this.tipRing.visible = true;
+    }
   }
 
   update(points, mode = 'scan') {
     if (!points || points.length < 2) {
-      this.line.visible = false;
-      this.dots.visible = false;
-      this.tipRing.visible = false;
+      this.hasPoints = false;
+      this.setVisible(false);
       return;
     }
 
-    this.line.visible = true;
-    this.dots.visible = true;
-    this.tipRing.visible = true;
+    this.hasPoints = true;
+    this.setVisible(true);
 
     // Color by mode: scan (cyan/green), avoid (red/amber), target (orange/fire)
     if (mode === 'avoid') {
