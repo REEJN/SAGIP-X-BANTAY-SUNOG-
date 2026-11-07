@@ -1,0 +1,292 @@
+<?xml version="1.0" ?>
+<!-- ============================================================================== -->
+<!-- BANTAY-SUNOG Autonomous Firefighting Robot URDF Model                         -->
+<!-- 4WD Skid-Steer Mobile Base, Articulated Tilt Gimbal, 3x HC-SR04, USB Camera   -->
+<!-- Compatible with NVIDIA Isaac Sim, PyBullet, Gazebo, and ROS 2                -->
+<!-- ============================================================================== -->
+<robot name="bantay_sunog">
+
+  <!-- Materials -->
+  <material name="chassis_navy">
+    <color rgba="0.12 0.16 0.23 1.0"/>
+  </material>
+  <material name="accent_cyan">
+    <color rgba="0.0 0.82 1.0 1.0"/>
+  </material>
+  <material name="wheel_rubber">
+    <color rgba="0.1 0.1 0.1 1.0"/>
+  </material>
+  <material name="sensor_gold">
+    <color rgba="0.85 0.65 0.15 1.0"/>
+  </material>
+  <material name="metal_gray">
+    <color rgba="0.6 0.6 0.6 1.0"/>
+  </material>
+
+  <!-- Base Footprint (Projection on Ground) -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 0.042" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Main Chassis Base Link -->
+  <link name="base_link">
+    <inertial>
+      <mass value="1.85"/>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <inertia ixx="0.015" ixy="0.0" ixz="0.0" iyy="0.022" iyz="0.0" izz="0.031"/>
+    </inertial>
+    <!-- Visual Chassis Body -->
+    <visual>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.30 0.22 0.07"/>
+      </geometry>
+      <material name="chassis_navy"/>
+    </visual>
+    <!-- Collision Box -->
+    <collision>
+      <origin xyz="0 0 0.02" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.30 0.22 0.07"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <!-- ============================================================================ -->
+  <!-- 4WD Wheels (Front-Left, Front-Right, Rear-Left, Rear-Right)                 -->
+  <!-- ============================================================================ -->
+  <!-- Wheel Macro / Links -->
+
+  <!-- Front Left Wheel -->
+  <link name="wheel_fl">
+    <inertial>
+      <mass value="0.12"/>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.00015"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.042" length="0.028"/>
+      </geometry>
+      <material name="wheel_rubber"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.042" length="0.028"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint_wheel_fl" type="continuous">
+    <parent link="base_link"/>
+    <child link="wheel_fl"/>
+    <origin xyz="0.09 0.12 0.0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Front Right Wheel -->
+  <link name="wheel_fr">
+    <inertial>
+      <mass value="0.12"/>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.00015"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.042" length="0.028"/>
+      </geometry>
+      <material name="wheel_rubber"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.042" length="0.028"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint_wheel_fr" type="continuous">
+    <parent link="base_link"/>
+    <child link="wheel_fr"/>
+    <origin xyz="0.09 -0.12 0.0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Rear Left Wheel -->
+  <link name="wheel_rl">
+    <inertial>
+      <mass value="0.12"/>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.00015"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.042" length="0.028"/>
+      </geometry>
+      <material name="wheel_rubber"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.042" length="0.028"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint_wheel_rl" type="continuous">
+    <parent link="base_link"/>
+    <child link="wheel_rl"/>
+    <origin xyz="-0.09 0.12 0.0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- Rear Right Wheel -->
+  <link name="wheel_rr">
+    <inertial>
+      <mass value="0.12"/>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <inertia ixx="0.0001" ixy="0.0" ixz="0.0" iyy="0.0001" iyz="0.0" izz="0.00015"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.042" length="0.028"/>
+      </geometry>
+      <material name="wheel_rubber"/>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="1.570796 0 0"/>
+      <geometry>
+        <cylinder radius="0.042" length="0.028"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint_wheel_rr" type="continuous">
+    <parent link="base_link"/>
+    <child link="wheel_rr"/>
+    <origin xyz="-0.09 -0.12 0.0" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+  </joint>
+
+  <!-- ============================================================================ -->
+  <!-- Articulated Tilt Gimbal Mount (Servomotor Pitch: -45 deg to +45 deg)         -->
+  <!-- ============================================================================ -->
+  <link name="gimbal_tilt_link">
+    <inertial>
+      <mass value="0.08"/>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <inertia ixx="0.00005" ixy="0.0" ixz="0.0" iyy="0.00005" iyz="0.0" izz="0.00008"/>
+    </inertial>
+    <visual>
+      <origin xyz="0.015 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.04 0.06 0.04"/>
+      </geometry>
+      <material name="accent_cyan"/>
+    </visual>
+    <collision>
+      <origin xyz="0.015 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.04 0.06 0.04"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="joint_gimbal_tilt" type="revolute">
+    <parent link="base_link"/>
+    <child link="gimbal_tilt_link"/>
+    <origin xyz="0.10 0.0 0.075" rpy="0 0 0"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="-0.785398" upper="0.785398" effort="1.5" velocity="3.0"/>
+  </joint>
+
+  <!-- Camera Optical Frame (Mounted on Gimbal) -->
+  <link name="camera_link">
+    <visual>
+      <origin xyz="0.01 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.02 0.025 0.025"/>
+      </geometry>
+      <material name="metal_gray"/>
+    </visual>
+  </link>
+  <joint name="camera_joint" type="fixed">
+    <parent link="gimbal_tilt_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.035 0.0 0.0" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Solenoid Water Nozzle (Mounted on Gimbal alongside camera) -->
+  <link name="nozzle_link">
+    <visual>
+      <origin xyz="0.01 0 0" rpy="0 1.570796 0"/>
+      <geometry>
+        <cylinder radius="0.006" length="0.03"/>
+      </geometry>
+      <material name="metal_gray"/>
+    </visual>
+  </link>
+  <joint name="nozzle_joint" type="fixed">
+    <parent link="gimbal_tilt_link"/>
+    <child link="nozzle_link"/>
+    <origin xyz="0.03 0.0 -0.018" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ============================================================================ -->
+  <!-- 3x HC-SR04 Ultrasonic Sensors                                               -->
+  <!-- Front (0 deg), Left (-45 deg), Right (+45 deg)                               -->
+  <!-- ============================================================================ -->
+
+  <!-- Front Ultrasonic Sensor -->
+  <link name="ultrasonic_front_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.015 0.045 0.02"/>
+      </geometry>
+      <material name="sensor_gold"/>
+    </visual>
+  </link>
+  <joint name="ultrasonic_front_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="ultrasonic_front_link"/>
+    <origin xyz="0.155 0.0 0.03" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Left Ultrasonic Sensor (Angled -45 deg / +Yaw to left) -->
+  <link name="ultrasonic_left_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0.785398"/>
+      <geometry>
+        <box size="0.015 0.045 0.02"/>
+      </geometry>
+      <material name="sensor_gold"/>
+    </visual>
+  </link>
+  <joint name="ultrasonic_left_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="ultrasonic_left_link"/>
+    <origin xyz="0.13 0.10 0.03" rpy="0 0 0.785398"/>
+  </joint>
+
+  <!-- Right Ultrasonic Sensor (Angled +45 deg / -Yaw to right) -->
+  <link name="ultrasonic_right_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 -0.785398"/>
+      <geometry>
+        <box size="0.015 0.045 0.02"/>
+      </geometry>
+      <material name="sensor_gold"/>
+    </visual>
+  </link>
+  <joint name="ultrasonic_right_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="ultrasonic_right_link"/>
+    <origin xyz="0.13 -0.10 0.03" rpy="0 0 -0.785398"/>
+  </joint>
+
+</robot>
