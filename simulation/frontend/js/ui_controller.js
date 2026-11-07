@@ -834,8 +834,8 @@ class UIController {
         : { type: 'CLEAR', flankClearSide: (distR >= distL ? 'RIGHT' : 'LEFT') };
 
       // Wall detection: triggers 90deg lane-turn arc into adjacent sweep lane
-      // Uses 10-11 inch collision trigger (~0.28m / 28cm) instead of old 27-inch trigger
-      if (classification.type === 'WALL' && (distF < 0.28 || telem.dist_front < 28.0)) {
+      // Uses 10-12 inch collision trigger (~0.30m / 30cm) to guarantee sharp corner & wall standoff
+      if (classification.type === 'WALL' && (distF < 0.32 || telem.dist_front < 32.0)) {
         if (this.scanPhase === 'SWEEP') {
           this.scanPhase = 'TURN_90_OUT';
           this.phaseTimer = 0;
@@ -855,8 +855,8 @@ class UIController {
 
       switch (this.scanPhase) {
         case 'SWEEP':
-          if (classification.type === 'OBSTACLE' && (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched))) {
-            // Discrete Obstacle (Crate / Barrel): Bypass around obstacle without abandoning sweep lane!
+          if (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched)) {
+            // Priority obstacle & wall avoidance along safe standoff trajectory!
             const rec = avoidance.recommendedPwm;
             this.robot.setMotorPwm(rec.left, rec.right);
           } else if (avoidance && avoidance.frontierGoal && Math.abs(avoidance.clearAngle) > 0.15) {
@@ -1475,8 +1475,8 @@ class UIController {
       return;
     }
 
-    // 2. Continuous Neural Trajectory: render smooth mapper trajectory towards goal destination
-    if (this.syncMode === 'neural' && avoidance && avoidance.worldPath && avoidance.worldPath.length > 1) {
+    // 2. Continuous Trajectory: render smooth mapper trajectory towards goal destination
+    if (avoidance && avoidance.worldPath && avoidance.worldPath.length > 1) {
       const path3D = avoidance.worldPath.map(p => new THREE.Vector3(p.x, 0.015, p.z));
       this.sim.predictionPath.update(path3D, 'scan');
       return;
@@ -1488,38 +1488,15 @@ class UIController {
 
     if (this.robotState === 'SEARCHING' || this.robotState === 'IDLE') {
       const fwd = new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)).normalize();
-      const distF = Math.max(0.35, (telem.dist_front / 100.0) - 0.40);
+      // Forward path clamped strictly by physical distance to obstacle/wall so it never penetrates
+      const rawDistM = (telem.dist_front / 100.0);
+      const safeDistM = Math.max(0.12, Math.min(1.4, rawDistM - 0.20));
 
       points.push(robotPos.clone());
-
-      const numFwd = 10;
+      const numFwd = 8;
       for (let i = 1; i <= numFwd; i++) {
-        const step = (distF / numFwd) * i;
+        const step = (safeDistM / numFwd) * i;
         points.push(robotPos.clone().add(fwd.clone().multiplyScalar(step)));
-      }
-
-      // 2. Predict the Zigzag Turn & Shift Lane
-      const turnPt = points[points.length - 1].clone();
-      const turnYaw = yaw + (this.scanDirection * Math.PI / 2);
-      const sideDir = new THREE.Vector3(Math.sin(turnYaw), 0, Math.cos(turnYaw)).normalize();
-
-      const numSide = 6;
-      const shiftDist = 0.55;
-      for (let i = 1; i <= numSide; i++) {
-        const step = (shiftDist / numSide) * i;
-        points.push(turnPt.clone().add(sideDir.clone().multiplyScalar(step)));
-      }
-
-      // 3. Predict the Reverse Return Track
-      const endShiftPt = points[points.length - 1].clone();
-      const returnYaw = yaw + Math.PI;
-      const returnDir = new THREE.Vector3(Math.sin(returnYaw), 0, Math.cos(returnYaw)).normalize();
-
-      const numReturn = 8;
-      const returnDist = 0.90;
-      for (let i = 1; i <= numReturn; i++) {
-        const step = (returnDist / numReturn) * i;
-        points.push(endShiftPt.clone().add(returnDir.clone().multiplyScalar(step)));
       }
 
       this.sim.predictionPath.update(points, 'scan');

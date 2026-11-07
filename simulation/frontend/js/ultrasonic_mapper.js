@@ -22,8 +22,10 @@ class ExplorationGrid {
     this.sizeMeters = sizeMeters;
     this.resolution = resolution;
     this.halfSize = sizeMeters / 2;
+    this.arenaRadius = this.halfSize;
     this.gridWidth = Math.round(sizeMeters / resolution);  // 45
     this.gridHeight = Math.round(sizeMeters / resolution); // 45
+    this.gridDim = this.gridWidth;
     this.totalCells = this.gridWidth * this.gridHeight;    // 2025
 
     // Cell states: 0 = UNDISCOVERED, 1 = FREE, 2 = OCCUPIED
@@ -124,6 +126,44 @@ class ExplorationGrid {
     }
   }
 
+  /**
+   * Fast 2D Bresenham line-of-sight raycaster.
+   * Checks if an unobstructed line exists between world (x0, z0) and (x1, z1).
+   * Returns false if any intermediate grid cell is OCCUPIED (state === 2).
+   */
+  hasLineOfSight(x0, z0, x1, z1) {
+    const g0 = this.worldToGrid(x0, z0);
+    const g1 = this.worldToGrid(x1, z1);
+    if (!g0 || !g1) return false;
+
+    let cx = g0.gx, cy = g0.gz;
+    const x1g = g1.gx, y1g = g1.gz;
+    const dx = Math.abs(x1g - cx);
+    const dy = Math.abs(y1g - cy);
+    const sx = (cx < x1g) ? 1 : -1;
+    const sy = (cy < y1g) ? 1 : -1;
+    let err = dx - dy;
+
+    let isStart = true;
+    while (true) {
+      if (cx === x1g && cy === y1g) {
+        break;
+      }
+      if (!isStart) {
+        const cellState = this.getCell(cx, cy);
+        if (cellState === 2) {
+          return false; // Line-of-sight occluded by mapped wall/obstacle
+        }
+      }
+      isStart = false;
+
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; cx += sx; }
+      if (e2 < dx) { err += dx; cy += sy; }
+    }
+    return true;
+  }
+
   getCoveragePercentage() {
     return Math.min(100, Math.round((this.discoveredCount / (this.totalCells * 0.75)) * 100));
   }
@@ -197,6 +237,17 @@ class ExplorationGrid {
       const infoGain = c.points.length;
 
       let score = infoGain * 14.0 - dist * 6.5;
+
+      // Line-of-sight check: if frontier is directly occluded behind a solid wall, heavily penalize it
+      // so robot routes toward open doorways instead of driving directly into walls!
+      if (robotPos) {
+        const hasLoS = this.hasLineOfSight(robotPos.x, robotPos.z, c.x, c.z);
+        if (!hasLoS) {
+          score -= 900.0; // Blocked behind a wall: cannot drive straight into it
+        } else {
+          score += 250.0; // Clear open corridor directly to frontier
+        }
+      }
 
       // Penalize frontiers inside or near the loop exclusion zone
       if (exclusionCentroid) {
@@ -458,7 +509,8 @@ class UltrasonicMapper {
         const dz = p.worldZ - robotPos.z;
         const lx = dx * cosY - dz * sinY; // Lateral (+X = right, -X = left)
         const lz = dx * sinY + dz * cosY; // Longitudinal (+Z = forward)
-        if (lz > 0.04 && lz < 2.8 && Math.abs(lx) < 2.0) {
+        // Include flank obstacles alongside chassis (down to -0.22m)
+        if (lz >= -0.22 && lz < 2.8 && Math.abs(lx) < 2.2) {
           localObstacles.push({ x: lx, z: lz, weight: 1.0 });
         }
       });
@@ -492,7 +544,8 @@ class UltrasonicMapper {
             if (dist > 0.05 && dist <= searchRadiusM) {
               const lx = dx * cosY - dz * sinY;
               const lz = dx * sinY + dz * cosY;
-              if (lz > 0.04 && lz < 2.8 && Math.abs(lx) < 2.0) {
+              // Include mapped obstacles down to chassis flank (-0.22m)
+              if (lz >= -0.22 && lz < 2.8 && Math.abs(lx) < 2.2) {
                 localObstacles.push({ x: lx, z: lz, weight: 2.0 });
               }
             }
@@ -520,7 +573,7 @@ class UltrasonicMapper {
           const dz = wz - robotPos.z;
           const lx = dx * cosY - dz * sinY;
           const lz = dx * sinY + dz * cosY;
-          if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.4) {
+          if (lz >= -0.22 && lz < 2.8 && Math.abs(lx) < 2.4) {
             localObstacles.push({ x: lx, z: lz, weight: 3.0 });
           }
         }
@@ -532,7 +585,7 @@ class UltrasonicMapper {
           const dz = wz - robotPos.z;
           const lx = dx * cosY - dz * sinY;
           const lz = dx * sinY + dz * cosY;
-          if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.4) {
+          if (lz >= -0.22 && lz < 2.8 && Math.abs(lx) < 2.4) {
             localObstacles.push({ x: lx, z: lz, weight: 3.0 });
           }
         }
@@ -544,7 +597,7 @@ class UltrasonicMapper {
           const dz = wallLimit - robotPos.z;
           const lx = dx * cosY - dz * sinY;
           const lz = dx * sinY + dz * cosY;
-          if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.4) {
+          if (lz >= -0.22 && lz < 2.8 && Math.abs(lx) < 2.4) {
             localObstacles.push({ x: lx, z: lz, weight: 3.0 });
           }
         }
@@ -556,9 +609,22 @@ class UltrasonicMapper {
           const dz = -wallLimit - robotPos.z;
           const lx = dx * cosY - dz * sinY;
           const lz = dx * sinY + dz * cosY;
-          if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.4) {
+          if (lz >= -0.22 && lz < 2.8 && Math.abs(lx) < 2.4) {
             localObstacles.push({ x: lx, z: lz, weight: 3.0 });
           }
+        }
+      }
+    }
+
+    // Compute flank obstacle clearances along robot body (Z in [-0.22, +0.35])
+    let minLeftFlankDist = 9.9;
+    let minRightFlankDist = 9.9;
+    for (const obs of localObstacles) {
+      if (obs.z >= -0.22 && obs.z <= 0.35) {
+        if (obs.x < -0.05 && -obs.x < minLeftFlankDist) {
+          minLeftFlankDist = -obs.x;
+        } else if (obs.x > 0.05 && obs.x < minRightFlankDist) {
+          minRightFlankDist = obs.x;
         }
       }
     }
@@ -649,6 +715,7 @@ class UltrasonicMapper {
     let bestAngle = 0.0;
     let maxScore = -9999;
     const sectorClearances = [];
+    const sectorCorridorHalfW = 0.26; // ~10.2 inches (expanded safety envelope to prevent corner grazing)
 
     sectorAngles.forEach(angle => {
       const dirX = Math.sin(angle);
@@ -661,7 +728,7 @@ class UltrasonicMapper {
         const proj = obs.x * dirX + obs.z * dirZ;
         if (proj > 0.10 && proj < clearance) {
           const perpDist = Math.abs(obs.x * dirZ - obs.z * dirX);
-          if (perpDist < forwardCorridorHalfW) {
+          if (perpDist < sectorCorridorHalfW) {
             clearance = Math.min(clearance, proj);
           }
         }
@@ -677,6 +744,14 @@ class UltrasonicMapper {
       // Reward alignment with destination goal
       const angleDev = Math.abs(angle - desiredGoalAngle);
       score -= angleDev * 9.0;
+
+      // Flank clearance safety: strictly prevent turning inward into an obstacle alongside chassis
+      if (minLeftFlankDist < 0.32 && angle < -0.08) {
+        score -= (0.32 - minLeftFlankDist) * 220.0; // Heavy penalty for turning into left flank obstacle
+      }
+      if (minRightFlankDist < 0.32 && angle > 0.08) {
+        score -= (0.32 - minRightFlankDist) * 220.0; // Heavy penalty for turning into right flank obstacle
+      }
 
       // Strong Corridor Commitment Hysteresis (prevents rapid left/right oscillation)
       if (this.activeCorridor === 'RIGHT') {
@@ -788,10 +863,10 @@ class UltrasonicMapper {
           const s = frac * pathLength;
 
           let currentYaw;
-          if (frac <= 0.5) {
-            currentYaw = finalAngle * (frac / 0.5);
+          if (frac <= 0.65) {
+            currentYaw = finalAngle;
           } else {
-            const blend = (frac - 0.5) / 0.5;
+            const blend = (frac - 0.65) / 0.35;
             currentYaw = finalAngle * (1.0 - blend) + desiredGoalAngle * blend;
           }
 
@@ -887,6 +962,27 @@ class UltrasonicMapper {
       }
     }
 
+    // 8.5 Waypoint Obstacle Inflation Pusher:
+    // Guarantee that no waypoint cuts through or passes within 0.28m (11.0 in) of any obstacle vertex
+    const minWaypointStandoff = 0.28;
+    for (let i = 1; i < localPath.length; i++) {
+      let p = localPath[i];
+      for (const obs of localObstacles) {
+        const dObsX = p.x - obs.x;
+        const dObsZ = p.y - obs.z;
+        const dObs = Math.hypot(dObsX, dObsZ);
+        if (dObs < minWaypointStandoff && dObs > 0.001) {
+          const pushDist = minWaypointStandoff - dObs;
+          p.x += (dObsX / dObs) * pushDist;
+          p.y += (dObsZ / dObs) * pushDist;
+          if (robotPos && worldPath[i]) {
+            worldPath[i].x = robotPos.x + p.x * cosY + p.y * sinY;
+            worldPath[i].z = robotPos.z - p.x * sinY + p.y * cosY;
+          }
+        }
+      }
+    }
+
     // 9. Pure Pursuit Path Tracking & Heading Convergence:
     let recLeft = 145;
     let recRight = 145;
@@ -939,6 +1035,15 @@ class UltrasonicMapper {
       const trim = Math.min(65, pathYaw * 80);
       recLeft = Math.round(145 + trim);
       recRight = Math.round(145 - trim);
+    }
+
+    // Flank clearance safety guard: prevent inward turns into obstacles alongside chassis
+    if (minLeftFlankDist < 0.26 && recLeft < recRight) {
+      recLeft = Math.max(recLeft, 110);
+      recRight = Math.min(recRight, 85);
+    } else if (minRightFlankDist < 0.26 && recRight < recLeft) {
+      recRight = Math.max(recRight, 110);
+      recLeft = Math.min(recLeft, 85);
     }
 
     const angleDeg = Math.round((finalAngle * 180) / Math.PI);

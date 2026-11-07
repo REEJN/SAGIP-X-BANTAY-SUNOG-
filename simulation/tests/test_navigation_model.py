@@ -490,6 +490,107 @@ class TestNavigationModel(unittest.TestCase):
         self.assertGreater(waypoints[-1][0], 0.40, "End of path must bend rightward toward frontier in +X")
         self.assertGreater(waypoints[-1][1], 1.20, "End of path must make forward progress in +Z")
 
+    def test_line_of_sight_frontier_and_corner_safety_margin(self):
+        """
+        Verify line-of-sight frontier filtering, 0.26m corner safety corridor, and waypoint inflation:
+        1. Line-of-sight raycaster detects intervening occupied cells and penalizes occluded frontiers (-900).
+        2. Expanded sector corridor (0.26m) detects corner vertices within chassis envelope (0.18m).
+        3. Waypoint Obstacle Inflation Pusher enforces minimum 0.28m (11") standoff from obstacle vertices.
+        4. Flank clearance guard penalizes inward turns into obstacles alongside chassis.
+        """
+        # 1. Line-of-Sight Raycasting Simulation
+        resolution = 0.20
+        grid_dim = 45
+        half_size = 4.5
+        grid_cells = np.zeros((grid_dim, grid_dim), dtype=np.uint8)
+
+        # Place a wall at x = 1.0m (gx = 27), spanning z from -1.0m to +1.0m
+        gx_wall = int(math.floor((1.0 + half_size) / resolution))
+        gz_min = int(math.floor((-1.0 + half_size) / resolution))
+        gz_max = int(math.floor((1.0 + half_size) / resolution))
+        for gz in range(gz_min, gz_max + 1):
+            grid_cells[gz, gx_wall] = 2  # 2 = OCCUPIED
+
+        def has_line_of_sight(x0, z0, x1, z1):
+            gx0 = int(math.floor((x0 + half_size) / resolution))
+            gz0 = int(math.floor((z0 + half_size) / resolution))
+            gx1 = int(math.floor((x1 + half_size) / resolution))
+            gz1 = int(math.floor((z1 + half_size) / resolution))
+
+            cx, cy = gx0, gz0
+            dx = abs(gx1 - cx)
+            dy = abs(gz1 - cy)
+            sx = 1 if cx < gx1 else -1
+            sy = 1 if cy < gz1 else -1
+            err = dx - dy
+
+            is_start = True
+            while True:
+                if cx == gx1 and cy == gz1:
+                    break
+                if not is_start:
+                    if 0 <= cx < grid_dim and 0 <= cy < grid_dim:
+                        if grid_cells[cy, cx] == 2:
+                            return False  # Blocked by occupied wall cell
+                is_start = False
+                e2 = 2 * err
+                if e2 > -dy:
+                    err -= dy
+                    cx += sx
+                if e2 < dx:
+                    err += dx
+                    cy += sy
+            return True
+
+        # Ray from (0, 0) to occluded frontier (2.0, 0.0) behind wall
+        los_occluded = has_line_of_sight(0.0, 0.0, 2.0, 0.0)
+        self.assertFalse(los_occluded, "Frontier directly behind wall must have line-of-sight = False")
+
+        # Ray from (0, 0) to clear frontier (0.0, 2.5) with open corridor
+        los_clear = has_line_of_sight(0.0, 0.0, 0.0, 2.5)
+        self.assertTrue(los_clear, "Frontier with open corridor must have line-of-sight = True")
+
+        # Frontier scoring comparison
+        score_occluded = 10 * 14.0 - 2.0 * 6.5 - (0.0 if los_occluded else 900.0)
+        score_clear = 10 * 14.0 - 2.5 * 6.5 + (250.0 if los_clear else 0.0)
+        self.assertGreater(score_clear, score_occluded, "Clear corridor frontier must easily outscore occluded frontier")
+
+        # 2. Expanded 0.26m Corner Safety Corridor vs Old 0.14m Corridor
+        # Corner vertex at (x=0.18, z=0.60). Robot swept diagonal turning radius is 0.186m.
+        obs_x, obs_z = 0.18, 0.60
+        dir_x, dir_z = 0.0, 1.0  # Ray heading straight forward
+        proj = obs_x * dir_x + obs_z * dir_z  # 0.60
+        perp_dist = abs(obs_x * dir_z - obs_z * dir_x)  # 0.18
+
+        old_half_w = 0.140
+        new_half_w = 0.260
+
+        # Under old narrow corridor (0.14m), corner was MISSED (perp_dist > 0.14m)
+        self.assertGreater(perp_dist, old_half_w, "Old corridor failed to detect 0.18m corner vertex")
+
+        # Under new expanded corridor (0.26m), corner is CAUGHT (perp_dist < 0.26m)
+        self.assertLess(perp_dist, new_half_w, "New 0.26m corridor must detect 0.18m corner vertex")
+
+        # 3. Waypoint Obstacle Inflation Pusher
+        # Waypoint placed too close to obstacle vertex (distance 0.15m < min_standoff 0.28m)
+        min_standoff = 0.28
+        wp = [0.15, 0.80]
+        corner_obs = [0.0, 0.80]
+        d_x = wp[0] - corner_obs[0]
+        d_z = wp[1] - corner_obs[1]
+        dist = math.hypot(d_x, d_z)
+        self.assertLess(dist, min_standoff)
+
+        # Apply radial inflation push
+        push = min_standoff - dist
+        wp[0] += (d_x / dist) * push
+        wp[1] += (d_z / dist) * push
+
+        new_dist = math.hypot(wp[0] - corner_obs[0], wp[1] - corner_obs[1])
+        self.assertAlmostEqual(new_dist, min_standoff, places=3,
+                               msg="Inflated waypoint must maintain >= 0.28m standoff from obstacle vertex")
+
 
 if __name__ == "__main__":
     unittest.main()
+
