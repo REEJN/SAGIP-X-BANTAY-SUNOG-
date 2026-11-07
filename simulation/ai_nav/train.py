@@ -20,9 +20,9 @@ from simulation.ai_nav.model import TinyMLNavPolicy
 
 def train_model(
     dataset_path: str = "simulation/ai_nav/nav_dataset.npz",
-    epochs: int = 45,
+    epochs: int = 60,
     batch_size: int = 64,
-    lr: float = 2.5e-3
+    lr: float = 1.8e-3
 ) -> TinyMLNavPolicy:
     """Train the TinyMLNavPolicy model on synthetic data."""
     if not os.path.exists(dataset_path):
@@ -248,18 +248,12 @@ static inline void nav_model_predict_from_sensors(
     in[2] = (dist_right_m < 0.0f) ? 0.0f : ((dist_right_m > NAV_MAX_ULTRASONIC_M) ? 1.0f : (dist_right_m / NAV_MAX_ULTRASONIC_M));
 
     // Target relative yaw [-PI, +PI] -> [-1, 1]
-    if (has_fire) {{
-        float yaw = target_rel_yaw_rad;
-        while (yaw > NAV_PI) yaw -= 2.0f * NAV_PI;
-        while (yaw < -NAV_PI) yaw += 2.0f * NAV_PI;
-        in[3] = yaw / NAV_PI;
-        in[4] = (target_dist_m < 0.0f) ? 0.0f : ((target_dist_m > NAV_MAX_FIRE_DIST_M) ? 1.0f : (target_dist_m / NAV_MAX_FIRE_DIST_M));
-        in[5] = 1.0f;
-    }} else {{
-        in[3] = 0.0f;
-        in[4] = 1.0f;
-        in[5] = 0.0f;
-    }}
+    float yaw = target_rel_yaw_rad;
+    while (yaw > NAV_PI) yaw -= 2.0f * NAV_PI;
+    while (yaw < -NAV_PI) yaw += 2.0f * NAV_PI;
+    in[3] = yaw / NAV_PI;
+    in[4] = (target_dist_m < 0.0f) ? 0.0f : ((target_dist_m > NAV_MAX_FIRE_DIST_M) ? 1.0f : (target_dist_m / NAV_MAX_FIRE_DIST_M));
+    in[5] = has_fire ? 1.0f : 0.0f;
 
     // Heading rate [-3, +3 rad/s] -> [-1, 1]
     in[6] = (heading_rate_rads < -NAV_MAX_YAW_RATE) ? -1.0f : ((heading_rate_rads > NAV_MAX_YAW_RATE) ? 1.0f : (heading_rate_rads / NAV_MAX_YAW_RATE));
@@ -271,7 +265,7 @@ static inline void nav_model_predict_from_sensors(
 
     // Anti-stall obstacle overtake guard: if path blocked and policy stalled without fire, overtake!
     if (!has_fire && dist_front_m < 0.65f && fabsf(fl_left) < 50.0f && fabsf(fl_right) < 50.0f) {{
-        bool turn_right = (dist_right_m >= dist_left_m);
+        bool turn_right = (fabsf(target_rel_yaw_rad) > 0.05f) ? (target_rel_yaw_rad > 0.05f) : (dist_right_m >= dist_left_m);
         float inner = (dist_front_m < 0.40f) ? -20.0f : 40.0f;
         fl_left = turn_right ? 150.0f : inner;
         fl_right = turn_right ? inner : 150.0f;
@@ -436,19 +430,13 @@ class NavModelRunner {{
     norm[1] = Math.max(0, Math.min(1.0, distLeftM / this.maxUltrasonicM));
     norm[2] = Math.max(0, Math.min(1.0, distRightM / this.maxUltrasonicM));
 
-    if (hasFireTarget) {{
-      // Wrap relative yaw to [-PI, +PI]
-      let yaw = targetRelYawRad;
-      while (yaw > Math.PI) yaw -= 2 * Math.PI;
-      while (yaw < -Math.PI) yaw += 2 * Math.PI;
-      norm[3] = Math.max(-1.0, Math.min(1.0, yaw / Math.PI));
-      norm[4] = Math.max(0, Math.min(1.0, (targetDistM || 5.0) / this.maxFireDistM));
-      norm[5] = 1.0;
-    }} else {{
-      norm[3] = 0.0;
-      norm[4] = 1.0;
-      norm[5] = 0.0;
-    }}
+    // Relative yaw [-PI, +PI] -> [-1, 1]
+    let yaw = targetRelYawRad || 0.0;
+    while (yaw > Math.PI) yaw -= 2 * Math.PI;
+    while (yaw < -Math.PI) yaw += 2 * Math.PI;
+    norm[3] = Math.max(-1.0, Math.min(1.0, yaw / Math.PI));
+    norm[4] = Math.max(0, Math.min(1.0, (targetDistM !== undefined ? targetDistM : 5.0) / this.maxFireDistM));
+    norm[5] = hasFireTarget ? 1.0 : 0.0;
 
     // Heading rate [-3, +3] -> [-1, 1]
     norm[6] = Math.max(-1.0, Math.min(1.0, (headingRateRadS || 0.0) / this.maxYawRate));
@@ -459,7 +447,7 @@ class NavModelRunner {{
     // If path in front is blocked and policy predicts low/stopped PWM without a fire target,
     // actively steer into the clearer side to overtake the obstacle!
     if (!hasFireTarget && distFrontM < 0.65 && Math.abs(leftPwm) < 50 && Math.abs(rightPwm) < 50) {{
-      const turnRight = (distRightM >= distLeftM);
+      const turnRight = (Math.abs(targetRelYawRad || 0) > 0.05) ? (targetRelYawRad > 0.05) : (distRightM >= distLeftM);
       const inner = (distFrontM < 0.40) ? -20 : 40;
       leftPwm = turnRight ? 150 : inner;
       rightPwm = turnRight ? inner : 150;
@@ -482,6 +470,11 @@ if (typeof window !== 'undefined') {{
 if __name__ == "__main__":
     trained_model = train_model()
     export_cpp_header(trained_model)
+    # Also sync to esp32_firmware/include
+    import shutil
+    os.makedirs("esp32_firmware/include", exist_ok=True)
+    shutil.copyfile("bantay_sunog_esp32/navigation_model.h", "esp32_firmware/include/navigation_model.h")
+    print("[SYNC] Copied C++ header to esp32_firmware/include/navigation_model.h")
     export_torchscript_and_json(trained_model)
     export_js_runner(trained_model)
     print("[ALL DONE] Model trained and exported across all target platforms!")

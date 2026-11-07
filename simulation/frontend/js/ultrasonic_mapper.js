@@ -3,7 +3,12 @@
  * Visualizes 3-beam ultrasonic field of view (HC-SR04 Front, Left, Right),
  * ego-centric point cloud projection of scanned obstacles, detected fire target,
  * standoff suppression perimeter, real-time extinguisher spray cone,
- * and PREDICTS A CONTINUOUS COLLISION-FREE AVOIDANCE PATH based on mapped occupancy.
+ * and PREDICTS A STABLE, COMMITTED, COLLISION-FREE AVOIDANCE PATH toward the best destination.
+ *
+ * Anti-Hallucination Features:
+ * - Corridor Commitment & Direction Lock (1.5s hysteresis hold prevents rapid Left/Right flipping)
+ * - Destination-Directed Sector Scoring (steers toward fire or open room waypoint)
+ * - Exponential Moving Average (EMA) Heading Smoothing (eliminates jitter and twitching)
  */
 
 class UltrasonicMapper {
@@ -26,21 +31,29 @@ class UltrasonicMapper {
 
     // Cached latest avoidance prediction
     this.latestAvoidance = null;
+
+    // Stable Corridor Management (Eliminates twitching / rapid switching)
+    this.activeCorridor = 'NONE'; // 'LEFT', 'RIGHT', 'NONE'
+    this.corridorCommitTime = 0;
+    this.minCommitDurationMs = 2000; // Lock into corridor for at least 2.0s
+    this.isObstacleAheadState = false; // Schmitt-trigger hysteresis state
+    this.smoothedClearAngle = 0.0;
   }
 
   /**
-   * Evaluates the mapping point cloud and 3-beam sensors to predict a collision-free
-   * avoidance path around obstacles.
+   * Evaluates the mapping point cloud and 3-beam sensors to predict a stable, collision-free
+   * avoidance path toward the best destination without rapid switching or oscillation.
    *
-   * @param {Object} robotPos - { x, z } robot position
+   * @param {Object} robotPos - { x, z } robot position in world coordinates
    * @param {number} robotYaw - heading angle in radians
    * @param {number} distF - front distance in cm
    * @param {number} distL - left distance in cm
    * @param {number} distR - right distance in cm
-   * @param {Object|null} target - optional fire target
+   * @param {Object|null} target - optional fire target from vision
+   * @param {Object|null} goalPos - optional best world destination { x, z }
    * @returns {Object} Predicted avoidance path details
    */
-  findClearAvoidancePath(robotPos, robotYaw, distF = 300, distL = 300, distR = 300, target = null) {
+  findClearAvoidancePath(robotPos, robotYaw, distF = 300, distL = 300, distR = 300, target = null, goalPos = null) {
     const now = Date.now();
     const activePoints = this.pointCloud.filter(p => now - p.time <= this.maxPointAgeMs);
 
@@ -72,20 +85,79 @@ class UltrasonicMapper {
     if (mL < 2.5) localObstacles.push({ x: Math.sin(-Math.PI / 4) * mL, z: Math.cos(-Math.PI / 4) * mL, weight: 1.5 });
     if (mR < 2.5) localObstacles.push({ x: Math.sin(Math.PI / 4) * mR, z: Math.cos(Math.PI / 4) * mR, weight: 1.5 });
 
-    // 3. Check if forward collision corridor is blocked
-    // Robot half-width is ~0.12m + 0.16m margin = 0.28m
+    // 3. Check if forward collision corridor is blocked (with Schmitt-trigger hysteresis)
     const forwardCorridorHalfW = 0.28;
-    const warningDist = 0.85; // meters
-    let isObstacleAhead = (mF < warningDist);
+    let minForwardDist = mF;
 
     for (const obs of localObstacles) {
-      if (obs.z > 0.10 && obs.z < warningDist && Math.abs(obs.x) < forwardCorridorHalfW) {
-        isObstacleAhead = true;
-        break;
+      if (obs.z > 0.08 && Math.abs(obs.x) < forwardCorridorHalfW) {
+        if (obs.z < minForwardDist) minForwardDist = obs.z;
       }
     }
 
-    // 4. Multi-Sector Polar Clearance Scan (-70 deg to +70 deg, 15 sectors)
+    // Schmitt-trigger hysteresis:
+    // Turn ON obstacle avoidance at < 0.85m; Turn OFF ONLY when path ahead is clear > 1.15m!
+    if (!this.isObstacleAheadState) {
+      if (minForwardDist < 0.85) {
+        this.isObstacleAheadState = true;
+      }
+    } else {
+      if (minForwardDist > 1.15) {
+        this.isObstacleAheadState = false;
+      }
+    }
+    const isObstacleAhead = this.isObstacleAheadState;
+
+    // 4. Determine Destination Goal Heading (Towards best destination)
+    let desiredGoalAngle = 0.0;
+    if (goalPos && robotPos) {
+      const dx = goalPos.x - robotPos.x;
+      const dz = goalPos.z - robotPos.z;
+      const worldGoalBearing = Math.atan2(dx, dz);
+      let diff = worldGoalBearing - robotYaw;
+      while (diff > Math.PI) diff -= Math.PI * 2;
+      while (diff < -Math.PI) diff += Math.PI * 2;
+      desiredGoalAngle = Math.max(-1.4, Math.min(1.4, diff));
+    } else if (target && target.x !== undefined) {
+      desiredGoalAngle = (target.x - 0.50) * 1.13;
+    }
+
+    // 5. Direction Lock & Corridor Commitment (Prevents Hallucination / Rapid Flipping)
+    const isCommitted = (this.activeCorridor !== 'NONE' && (now - this.corridorCommitTime < this.minCommitDurationMs));
+
+    if (isObstacleAhead) {
+      if (!isCommitted || this.activeCorridor === 'NONE') {
+        // Choose initial corridor side: destination alignment + ultrasonic clearance
+        let chosenSide = 'RIGHT';
+        if (Math.abs(desiredGoalAngle) > 0.20) {
+          // If goal destination is distinctly to the right or left, bypass on that side
+          chosenSide = desiredGoalAngle > 0 ? 'RIGHT' : 'LEFT';
+          // Fail-safe: if the destination side is cramped (<0.35m), switch to clearer side
+          if (chosenSide === 'RIGHT' && mR < 0.35 && mL > 0.55) chosenSide = 'LEFT';
+          if (chosenSide === 'LEFT' && mL < 0.35 && mR > 0.55) chosenSide = 'RIGHT';
+        } else {
+          chosenSide = (mR >= mL) ? 'RIGHT' : 'LEFT';
+        }
+        this.activeCorridor = chosenSide;
+        this.corridorCommitTime = now;
+      } else {
+        // Active corridor check: if committed side becomes blocked (<0.22m), emergency switch
+        if (this.activeCorridor === 'RIGHT' && mR < 0.22 && mL > 0.60) {
+          this.activeCorridor = 'LEFT';
+          this.corridorCommitTime = now;
+        } else if (this.activeCorridor === 'LEFT' && mL < 0.22 && mR > 0.60) {
+          this.activeCorridor = 'RIGHT';
+          this.corridorCommitTime = now;
+        }
+      }
+    } else {
+      // Clear ahead: release corridor lock only if completely free
+      if (minForwardDist >= 1.15 && !isCommitted) {
+        this.activeCorridor = 'NONE';
+      }
+    }
+
+    // 6. Multi-Sector Polar Clearance Scan (-70 deg to +70 deg, 15 sectors)
     const sectorAngles = [];
     const numSectors = 15;
     for (let i = 0; i < numSectors; i++) {
@@ -97,12 +169,6 @@ class UltrasonicMapper {
     let maxScore = -9999;
     const sectorClearances = [];
 
-    // Desired goal heading (towards fire if exists, else straight forward 0.0)
-    let desiredGoalAngle = 0.0;
-    if (target && target.x !== undefined) {
-      desiredGoalAngle = (target.x - 0.50) * 1.13;
-    }
-
     sectorAngles.forEach(angle => {
       const dirX = Math.sin(angle);
       const dirZ = Math.cos(angle);
@@ -111,10 +177,8 @@ class UltrasonicMapper {
       let clearance = 2.5;
 
       for (const obs of localObstacles) {
-        // Project obstacle onto ray
         const proj = obs.x * dirX + obs.z * dirZ;
         if (proj > 0.10 && proj < clearance) {
-          // Perpendicular distance from ray to obstacle
           const perpDist = Math.abs(obs.x * dirZ - obs.z * dirX);
           if (perpDist < forwardCorridorHalfW) {
             clearance = Math.min(clearance, proj);
@@ -124,27 +188,33 @@ class UltrasonicMapper {
 
       sectorClearances.push({ angle, clearance });
 
-      // Score: heavily reward distance clearance; penalize deviation from desired goal
-      let score = clearance * 12.0;
-
-      // Bonus for open space
+      // Score components
+      let score = clearance * 14.0;
       if (clearance > 1.2) score += 10.0;
       if (clearance > 1.8) score += 15.0;
 
-      // Penalty for deviation from goal direction
+      // Reward alignment with destination goal
       const angleDev = Math.abs(angle - desiredGoalAngle);
-      score -= angleDev * 6.0;
+      score -= angleDev * 9.0;
 
-      // Side preference if ahead is blocked: prefer turning towards side with more sensor clearance
-      if (isObstacleAhead) {
-        const sideBias = (mR >= mL) ? 1.0 : -1.0;
-        if ((sideBias > 0 && angle > 0) || (sideBias < 0 && angle < 0)) {
-          score += 6.0;
+      // Strong Corridor Commitment Hysteresis (prevents rapid left/right oscillation)
+      if (this.activeCorridor === 'RIGHT') {
+        if (angle > 0.15) {
+          score += 35.0; // Strong bonus for maintaining committed rightward corridor
+        } else if (angle < -0.15) {
+          score -= 30.0; // Penalty for switching to opposite side
         }
-        // Strongly penalize heading straight into the obstacle
-        if (Math.abs(angle) < 0.22) {
-          score -= 30.0;
+      } else if (this.activeCorridor === 'LEFT') {
+        if (angle < -0.15) {
+          score += 35.0; // Strong bonus for maintaining committed leftward corridor
+        } else if (angle > 0.15) {
+          score -= 30.0; // Penalty for switching to opposite side
         }
+      }
+
+      // Heavily penalize heading directly into obstacle
+      if (isObstacleAhead && Math.abs(angle) < 0.22) {
+        score -= 40.0;
       }
 
       if (score > maxScore) {
@@ -153,22 +223,35 @@ class UltrasonicMapper {
       }
     });
 
-    // 5. Construct Smooth Predicted Trajectory Waypoints
+    // 7. Exponential Moving Average (EMA) Heading Smoothing (removes jitter)
+    const alpha = isObstacleAhead ? 0.25 : 0.40;
+    this.smoothedClearAngle = this.smoothedClearAngle * (1.0 - alpha) + bestAngle * alpha;
+    const finalAngle = (Math.abs(this.smoothedClearAngle) < 0.03 && !isObstacleAhead) ? 0.0 : this.smoothedClearAngle;
+
+    // 8. Construct Smooth Predicted Trajectory Waypoints toward Destination
     const localPath = [];
     const worldPath = [];
 
     localPath.push({ x: 0, y: 0 }); // Origin at robot center
     if (robotPos) worldPath.push({ x: robotPos.x, z: robotPos.z });
 
-    const pathLength = isObstacleAhead ? 1.45 : 1.8;
+    const pathLength = isObstacleAhead ? 1.5 : 1.8;
     const numWaypoints = 10;
 
     for (let i = 1; i <= numWaypoints; i++) {
       const frac = i / numWaypoints;
       const s = frac * pathLength;
 
-      // Smooth clothoid/bezier curve turning towards bestAngle
-      const currentYaw = bestAngle * Math.min(1.0, frac * 1.5);
+      // First half: curve along finalAngle to circumvent obstacle
+      // Second half: smoothly reconnect trajectory towards desiredGoalAngle (destination)
+      let currentYaw;
+      if (frac <= 0.5) {
+        currentYaw = finalAngle * (frac / 0.5);
+      } else {
+        const blend = (frac - 0.5) / 0.5;
+        currentYaw = finalAngle * (1.0 - blend) + desiredGoalAngle * blend;
+      }
+
       const lx = Math.sin(currentYaw) * s;
       const lz = Math.cos(currentYaw) * s;
 
@@ -181,41 +264,42 @@ class UltrasonicMapper {
       }
     }
 
-    // 6. Compute recommended differential drive motor PWM
+    // 9. Compute recommended differential drive motor PWM
     let recLeft = 150;
     let recRight = 150;
 
     if (isObstacleAhead) {
-      if (bestAngle > 0.05) {
-        // Curve right along predicted path
+      if (finalAngle > 0.06) {
+        // Committed rightward bypass
         recLeft = 160;
-        recRight = Math.max(30, Math.round(160 - bestAngle * 115));
-      } else if (bestAngle < -0.05) {
-        // Curve left along predicted path
+        recRight = Math.max(35, Math.round(160 - finalAngle * 125));
+      } else if (finalAngle < -0.06) {
+        // Committed leftward bypass
         recRight = 160;
-        recLeft = Math.max(30, Math.round(160 - Math.abs(bestAngle) * 115));
+        recLeft = Math.max(35, Math.round(160 - Math.abs(finalAngle) * 125));
       }
-    } else if (target && Math.abs(desiredGoalAngle) > 0.08) {
-      // Steer towards target
-      const trim = desiredGoalAngle * 65;
+    } else if (Math.abs(desiredGoalAngle) > 0.08) {
+      // Steer toward goal destination
+      const trim = Math.min(65, desiredGoalAngle * 75);
       recLeft = Math.round(145 + trim);
       recRight = Math.round(145 - trim);
     }
 
-    const angleDeg = Math.round((bestAngle * 180) / Math.PI);
+    const angleDeg = Math.round((finalAngle * 180) / Math.PI);
     let pathStatus = 'CLEAR';
     if (isObstacleAhead) {
-      pathStatus = bestAngle >= 0 ? `AVOID RIGHT (+${angleDeg}°)` : `AVOID LEFT (${angleDeg}°)`;
+      pathStatus = finalAngle >= 0 ? `AVOID RIGHT (+${angleDeg}°)` : `AVOID LEFT (${angleDeg}°)`;
     }
 
     return {
       isObstacleAhead,
-      clearAngle: bestAngle,
+      clearAngle: finalAngle,
       recommendedPwm: { left: recLeft, right: recRight },
       pathStatus,
       localPath,
       worldPath,
-      sectorClearances
+      sectorClearances,
+      activeCorridor: this.activeCorridor
     };
   }
 
@@ -236,7 +320,8 @@ class UltrasonicMapper {
       hasFire = false,
       target = null,
       isSpraying = false,
-      robotState = 'SEARCHING'
+      robotState = 'SEARCHING',
+      goalPos = null
     } = data;
 
     const width = this.canvas.width;
@@ -280,8 +365,8 @@ class UltrasonicMapper {
     // Prune stale points
     this.pointCloud = this.pointCloud.filter(p => now - p.time <= this.maxPointAgeMs);
 
-    // Predict avoidance path from mapping
-    const avoidance = this.findClearAvoidancePath(robotPos, robotYaw, distF, distL, distR, target);
+    // Predict stable, destination-directed avoidance path from mapping
+    const avoidance = this.findClearAvoidancePath(robotPos, robotYaw, distF, distL, distR, target, goalPos);
     this.latestAvoidance = avoidance;
 
     // -------------------------------------------------------------------------

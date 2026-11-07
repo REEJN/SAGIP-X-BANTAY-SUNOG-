@@ -432,10 +432,10 @@ def generate_synthetic_dataset(
         if episode % 50 == 0 or total_samples >= target_samples:
             print(f"[DATASET] Episode {episode}: Collected {total_samples} samples so far...")
 
-    # Augment with fire standoff standstill examples (fire at 0.40m - 0.48m, target action [0, 0])
+    # 1. Augment with fire standoff standstill examples (fire at 0.40m - 0.50m, target action [0, 0])
     print("[DATASET] Augmenting dataset with Rule-Based SIL standoff suppression transitions...")
-    for _ in range(2500):
-        df_standoff = random.uniform(0.40, 0.48)
+    for _ in range(3000):
+        df_standoff = random.uniform(0.40, 0.50)
         dl_standoff = random.uniform(0.6, 2.5)
         dr_standoff = random.uniform(0.6, 2.5)
         yaw_standoff = random.uniform(-0.15, 0.15)
@@ -452,39 +452,117 @@ def generate_synthetic_dataset(
         inputs_list.append(norm_feat)
         actions_list.append([0.0, 0.0])
 
-    # Augment with dedicated obstacle avoidance transitions from Rule-Based SIL
-    print("[DATASET] Augmenting dataset with Rule-Based SIL obstacle avoidance transitions...")
-    for _ in range(4000):
-        df_obs = random.uniform(0.15, 0.65)
-        dl_obs = random.uniform(0.15, 3.0)
-        dr_obs = random.uniform(0.15, 3.0)
-        heading = random.uniform(-1.0, 1.0)
+    # 2. Augment with Destination-Directed Obstacle Bypass Transitions (8,000 samples)
+    # The robot encounters an obstacle in front and smoothly steers along the clear bypass angle
+    # that leads toward its destination (fire target or room waypoint).
+    print("[DATASET] Augmenting dataset with destination-directed obstacle bypass transitions...")
+    for _ in range(8000):
+        df_obs = random.uniform(0.22, 0.85)
+        dl_obs = random.uniform(0.20, 2.8)
+        dr_obs = random.uniform(0.20, 2.8)
+        dest_yaw = random.uniform(-1.2, 1.2)
+        dest_dist = random.uniform(0.8, 5.0)
+        has_fire = 1.0 if random.random() < 0.40 else 0.0
+        heading = random.uniform(-0.5, 0.5)
+
+        # Determine clear bypass heading biased toward destination
+        # Polar clearance evaluation:
+        if dr_obs >= dl_obs:
+            if dest_yaw > -0.15 or dl_obs < 0.45:
+                # Clear rightward corridor aligned with destination
+                clear_angle = random.uniform(0.35, 0.85)
+            else:
+                # Left is slightly closer to destination, but right has wider clearance
+                clear_angle = random.uniform(-0.65, -0.35) if dl_obs > 0.70 else random.uniform(0.35, 0.85)
+        else:
+            if dest_yaw < 0.15 or dr_obs < 0.45:
+                # Clear leftward corridor aligned with destination
+                clear_angle = random.uniform(-0.85, -0.35)
+            else:
+                clear_angle = random.uniform(0.35, 0.65) if dr_obs > 0.70 else random.uniform(-0.85, -0.35)
+
         norm_feat = normalize_inputs(
             dist_front=df_obs,
             dist_left=dl_obs,
             dist_right=dr_obs,
-            target_rel_yaw=0.0,
-            target_distance=5.0,
-            has_fire_target=0.0,
+            target_rel_yaw=clear_angle,
+            target_distance=dest_dist,
+            has_fire_target=has_fire,
             heading_rate=heading
         )
-        # Query SIL avoidance directly
-        dummy_expert = RuleBasedSilExpert()
-        dummy_expert.robot_state = "OBSTACLE_AVOID"
-        dummy_expert.avoid_phase = "WALL_FOLLOW" if df_obs > 0.25 else "BACKOUT"
-        lp, rp = dummy_expert.compute_action({
-            "dist_front": df_obs,
-            "dist_left": dl_obs,
-            "dist_right": dr_obs,
-            "target_rel_yaw": 0.0,
-            "target_distance": 5.0,
-            "has_fire_target": 0.0,
-            "heading_rate": heading
-        })
+
+        # Smooth differential drive steering along clear bypass angle:
+        # Positive forward momentum with differential trimming (no stalling!)
+        if clear_angle > 0.05:
+            # Turn right to bypass obstacle
+            base_speed = 155.0
+            steer = min(115.0, clear_angle * 140.0)
+            lp = base_speed
+            rp = max(40.0, base_speed - steer)
+        else:
+            # Turn left to bypass obstacle
+            base_speed = 155.0
+            steer = min(115.0, abs(clear_angle) * 140.0)
+            rp = base_speed
+            lp = max(40.0, base_speed - steer)
+
         inputs_list.append(norm_feat)
         actions_list.append([lp, rp])
 
-    # Augment with visual fire homing at varied angles
+    # 3. Augment with Close-Quarters Emergency Escape / Backout (3,000 samples)
+    print("[DATASET] Augmenting dataset with close-quarters emergency escape transitions...")
+    for _ in range(3000):
+        df_close = random.uniform(0.10, 0.22)
+        dl_close = random.uniform(0.12, 1.5)
+        dr_close = random.uniform(0.12, 1.5)
+        turn_left = (dl_close >= dr_close)
+        norm_feat = normalize_inputs(
+            dist_front=df_close,
+            dist_left=dl_close,
+            dist_right=dr_close,
+            target_rel_yaw=0.0,
+            target_distance=5.0,
+            has_fire_target=0.0,
+            heading_rate=0.0
+        )
+        # Reverse or reverse pivot
+        if random.random() < 0.5:
+            lp, rp = -150.0, -150.0
+        else:
+            lp = -140.0 if turn_left else 140.0
+            rp = 140.0 if turn_left else -140.0
+        inputs_list.append(norm_feat)
+        actions_list.append([lp, rp])
+
+    # 4. Augment with Open-Space Destination & Waypoint Tracking (6,000 samples)
+    print("[DATASET] Augmenting dataset with open-space waypoint tracking transitions...")
+    for _ in range(6000):
+        df_open = random.uniform(0.85, 3.0)
+        dl_open = random.uniform(0.80, 3.0)
+        dr_open = random.uniform(0.80, 3.0)
+        waypoint_yaw = random.uniform(-1.4, 1.4)
+        waypoint_dist = random.uniform(1.0, 5.0)
+        has_fire = 1.0 if random.random() < 0.40 else 0.0
+
+        norm_feat = normalize_inputs(
+            dist_front=df_open,
+            dist_left=dl_open,
+            dist_right=dr_open,
+            target_rel_yaw=waypoint_yaw,
+            target_distance=waypoint_dist,
+            has_fire_target=has_fire,
+            heading_rate=0.0
+        )
+
+        speed = 145.0
+        trim = np.clip(waypoint_yaw * 85.0, -80.0, 80.0)
+        lp = float(np.clip(speed + trim, -255.0, 255.0))
+        rp = float(np.clip(speed - trim, -255.0, 255.0))
+
+        inputs_list.append(norm_feat)
+        actions_list.append([lp, rp])
+
+    # 5. Augment with visual fire homing at varied angles (4,000 samples)
     print("[DATASET] Augmenting dataset with Rule-Based SIL visual servoing transitions...")
     for _ in range(4000):
         df_fire = random.uniform(0.8, 3.0)

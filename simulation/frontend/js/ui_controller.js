@@ -306,9 +306,12 @@ class UIController {
       // Estimate distance in cm from bounding box if missing or 0
       let estimatedDistCm = res.best_target.distanceCm;
       if (!estimatedDistCm || estimatedDistCm <= 0) {
-        if (avgBboxArea > 0.001) {
+        const currentTelem = this.sensors ? this.sensors.getTelemetry() : null;
+        if (currentTelem && currentTelem.dist_front && currentTelem.dist_front < 280) {
+          estimatedDistCm = Math.round(currentTelem.dist_front);
+        } else if (avgBboxArea > 0.001) {
           // Empirical pinhole optical formula: d ~ k / sqrt(area)
-          estimatedDistCm = Math.round(15.0 / Math.sqrt(avgBboxArea));
+          estimatedDistCm = Math.round(45.0 / Math.sqrt(avgBboxArea));
         }
       }
 
@@ -408,6 +411,33 @@ class UIController {
     }
     if (this.mapper) {
       const target = this.realVisionTarget || telem.target;
+
+      // Determine best world destination goal { x, z }
+      let goalPos = null;
+      if (this.fireSystem) {
+        const activeFires = this.fireSystem.getActiveFires();
+        if (activeFires.length > 0) {
+          let closestDist = Infinity;
+          for (const f of activeFires) {
+            const d = Math.hypot(f.position.x - this.robot.position.x, f.position.z - this.robot.position.z);
+            if (d < closestDist) {
+              closestDist = d;
+              goalPos = { x: f.position.x, z: f.position.z };
+            }
+          }
+        }
+      }
+
+      // If no active fire, project forward destination along current search heading
+      if (!goalPos) {
+        const fwdX = Math.sin(this.robot.yaw);
+        const fwdZ = Math.cos(this.robot.yaw);
+        goalPos = {
+          x: this.robot.position.x + fwdX * 2.5,
+          z: this.robot.position.z + fwdZ * 2.5
+        };
+      }
+
       this.latestAvoidance = this.mapper.update({
         robotPos: this.robot.position,
         robotYaw: this.robot.yaw,
@@ -416,6 +446,7 @@ class UIController {
         distR: telem.dist_right,
         hasFire: !!(telem.flame_detected || (target && target.confidence > 0.4)),
         target: target,
+        goalPos: goalPos,
         isSpraying: !!this.robot.solenoidActive,
         robotState: this.robotState
       });
@@ -508,9 +539,11 @@ class UIController {
     const headingRate = this.robot.currentAngularSpeed || 0.0;
 
     // Check standoff suppression zone (45 - 55 cm) with multi-signal proximity:
-    // 1. targetDist <= 0.55m, 2. Front ultrasonic distF <= 0.50m, 3. Rolling avg flame bbox area >= 0.10
+    // Standoff requires:
+    // 1. Physical ultrasonic proximity: front ultrasonic distF <= 0.55m
+    // OR 2. Close physical distance (distF <= 0.75m) coupled with optical confirmation (targetDist <= 0.55m or avgArea >= 0.18)
     const avgArea = (target && target.bbox_area !== undefined) ? target.bbox_area : 0;
-    const isAtStandoffDistance = (targetDist <= 0.55 || distF <= 0.50 || avgArea >= 0.10);
+    const isAtStandoffDistance = (distF <= 0.55) || (distF <= 0.75 && (targetDist <= 0.55 || avgArea >= 0.18));
 
     if (hasFire && isAtStandoffDistance) {
       this.robotState = 'EXTINGUISHING';
@@ -545,8 +578,12 @@ class UIController {
 
       const avoidance = this.latestAvoidance || (this.mapper ? this.mapper.findClearAvoidancePath(this.robot.position, this.robot.yaw, telem.dist_front, telem.dist_left, telem.dist_right, target) : null);
 
-      if (!hasFire && avoidance && avoidance.isObstacleAhead) {
+      if (avoidance && avoidance.isObstacleAhead) {
         // Feed the predicted clear heading directly into the neural policy!
+        // avoidance.clearAngle is smoothly computed and biased toward goal destination (fire or room path)
+        targetRelYaw = avoidance.clearAngle;
+      } else if (!hasFire && avoidance && Math.abs(avoidance.clearAngle) > 0.05) {
+        // Guide exploration along the clear room corridor toward open space
         targetRelYaw = avoidance.clearAngle;
       }
 
@@ -561,17 +598,29 @@ class UIController {
         headingRate
       );
 
+      // Deadband compensation & friction overcoming:
+      // Physical skid-steer DC motors stall below 70 PWM. Scale active navigation signals to 105-170 PWM.
+      const overcomeFriction = (pwm) => {
+        if (Math.abs(pwm) < 15) return 0;
+        const sign = Math.sign(pwm);
+        const mag = Math.min(255, Math.max(95, Math.round(Math.abs(pwm) * 1.5 + 30)));
+        return sign * mag;
+      };
+
+      leftPwm = overcomeFriction(leftPwm);
+      rightPwm = overcomeFriction(rightPwm);
+
       // 3. Active Mapping-Based Obstacle Avoidance & Path Following:
       // Steer decisively along the predicted new path generated from the mapping!
-      if (!hasFire && avoidance && avoidance.isObstacleAhead) {
+      if (avoidance && avoidance.isObstacleAhead) {
         const rec = avoidance.recommendedPwm;
         if (Math.abs(leftPwm) < 70 && Math.abs(rightPwm) < 70) {
           leftPwm = rec.left;
           rightPwm = rec.right;
         } else {
           // Harmonize neural model output with predictive mapping guidance
-          leftPwm = Math.round(leftPwm * 0.35 + rec.left * 0.65);
-          rightPwm = Math.round(rightPwm * 0.35 + rec.right * 0.65);
+          leftPwm = Math.round(leftPwm * 0.40 + rec.left * 0.60);
+          rightPwm = Math.round(rightPwm * 0.40 + rec.right * 0.60);
         }
       }
 
@@ -1086,11 +1135,18 @@ class UIController {
   computePredictionPath(telem) {
     if (!this.sim.predictionPath) return;
 
-    // 1. Predictive Avoidance Path from Mapping: when obstacle is ahead, render the predicted bypass route!
+    // 1. Predictive Avoidance Path from Mapping: when obstacle is ahead or committing to bypass corridor!
     const avoidance = this.latestAvoidance;
-    if (avoidance && avoidance.isObstacleAhead && avoidance.worldPath && avoidance.worldPath.length > 1) {
+    if (avoidance && (avoidance.isObstacleAhead || (avoidance.activeCorridor && avoidance.activeCorridor !== 'NONE')) && avoidance.worldPath && avoidance.worldPath.length > 1) {
       const avoid3DPoints = avoidance.worldPath.map(p => new THREE.Vector3(p.x, 0.015, p.z));
       this.sim.predictionPath.update(avoid3DPoints, 'avoid');
+      return;
+    }
+
+    // 2. Continuous Neural Trajectory: render smooth mapper trajectory towards goal destination
+    if (this.syncMode === 'neural' && avoidance && avoidance.worldPath && avoidance.worldPath.length > 1) {
+      const path3D = avoidance.worldPath.map(p => new THREE.Vector3(p.x, 0.015, p.z));
+      this.sim.predictionPath.update(path3D, 'scan');
       return;
     }
 

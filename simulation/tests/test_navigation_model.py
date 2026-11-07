@@ -226,6 +226,32 @@ class TestNavigationModel(unittest.TestCase):
         )
         self.assertGreater(r_left, l_left, "Should steer left (right_pwm > left_pwm) when left path is clearer")
 
+    def test_destination_directed_clear_path_steering(self):
+        """Verify that when target_rel_yaw is non-zero without fire (e.g. bypass waypoint or room target), policy steers towards it."""
+        # Desired destination is to the right (+0.6 rad)
+        l_dest_r, r_dest_r = self.numpy_runner.step(
+            dist_front_m=2.0,
+            dist_left_m=2.0,
+            dist_right_m=2.0,
+            target_rel_yaw_rad=0.6,
+            target_dist_m=3.0,
+            has_fire=False,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(l_dest_r, r_dest_r, "Policy must steer right towards destination waypoint")
+
+        # Desired destination is to the left (-0.6 rad)
+        l_dest_l, r_dest_l = self.numpy_runner.step(
+            dist_front_m=2.0,
+            dist_left_m=2.0,
+            dist_right_m=2.0,
+            target_rel_yaw_rad=-0.6,
+            target_dist_m=3.0,
+            has_fire=False,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(r_dest_l, l_dest_l, "Policy must steer left towards destination waypoint")
+
 
 if __name__ == "__main__":
     unittest.main()

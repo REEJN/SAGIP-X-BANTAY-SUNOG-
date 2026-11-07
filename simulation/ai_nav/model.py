@@ -43,10 +43,10 @@ def normalize_inputs(
     # 4. target_rel_yaw (radians [-PI, +PI] -> [-1.0, 1.0])
     # Wrap to [-PI, +PI]
     yaw_err = (target_rel_yaw + math.pi) % (2 * math.pi) - math.pi
-    yaw_norm = float(np.clip(yaw_err / math.pi, -1.0, 1.0)) if has_fire_target > 0.5 else 0.0
+    yaw_norm = float(np.clip(yaw_err / math.pi, -1.0, 1.0))
     
     # 5. target_distance (meters [0.0, 5.0] -> [0.0, 1.0])
-    td_norm = float(np.clip(target_distance, 0.0, MAX_FIRE_DISTANCE) / MAX_FIRE_DISTANCE) if has_fire_target > 0.5 else 1.0
+    td_norm = float(np.clip(target_distance, 0.0, MAX_FIRE_DISTANCE) / MAX_FIRE_DISTANCE)
     
     # 6. has_fire_target (1.0 if fire confirmed, 0.0 if searching)
     hf_norm = 1.0 if has_fire_target > 0.5 else 0.0
