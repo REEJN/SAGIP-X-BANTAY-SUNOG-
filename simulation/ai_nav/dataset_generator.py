@@ -593,6 +593,44 @@ def generate_synthetic_dataset(
         inputs_list.append(norm_feat)
         actions_list.append([lp, rp])
 
+    # 6. Augment with Straight Waypoint Convergence & Anti-Circulating Transitions (8,000 samples)
+    print("[DATASET] Augmenting dataset with waypoint convergence & straight-line cruising transitions...")
+    for _ in range(8000):
+        # Forward space is open or opening up
+        df_conv = random.uniform(0.65, 3.0)
+        # Obstacle may be alongside on left or right (clearing an obstacle)
+        dl_conv = random.uniform(0.35, 2.5)
+        dr_conv = random.uniform(0.35, 2.5)
+
+        # Small heading error to fixed waypoint (|yaw| < 0.15 rad ~ 8.5 deg)
+        waypoint_yaw = random.uniform(-0.15, 0.15) if random.random() < 0.65 else random.uniform(-0.55, 0.55)
+        waypoint_dist = random.uniform(0.8, 4.0)
+        has_fire = 1.0 if random.random() < 0.30 else 0.0
+
+        norm_feat = normalize_inputs(
+            dist_front=df_conv,
+            dist_left=dl_conv,
+            dist_right=dr_conv,
+            target_rel_yaw=waypoint_yaw,
+            target_distance=waypoint_dist,
+            has_fire_target=has_fire,
+            heading_rate=0.0
+        )
+
+        # Once aligned (|yaw| < 0.08), maintain balanced cruising speed without turning!
+        base_speed = 150.0
+        if abs(waypoint_yaw) < 0.08:
+            lp = base_speed
+            rp = base_speed
+        else:
+            # Proportional gentle convergence trim
+            trim = waypoint_yaw * 70.0
+            lp = float(np.clip(base_speed + trim, -255.0, 255.0))
+            rp = float(np.clip(base_speed - trim, -255.0, 255.0))
+
+        inputs_list.append(norm_feat)
+        actions_list.append([lp, rp])
+
     X = np.array(inputs_list, dtype=np.float32)
     Y = np.array(actions_list, dtype=np.float32)
 

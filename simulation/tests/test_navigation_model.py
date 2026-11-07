@@ -252,6 +252,36 @@ class TestNavigationModel(unittest.TestCase):
         )
         self.assertGreater(r_dest_l, l_dest_l, "Policy must steer left towards destination waypoint")
 
+    def test_waypoint_alignment_straight_cruising(self):
+        """Verify that when aligned with a waypoint (target_rel_yaw ≈ 0), policy cruises straight without spinning."""
+        # Aligned with waypoint in open space
+        l_pwm, r_pwm = self.numpy_runner.step(
+            dist_front_m=2.0,
+            dist_left_m=2.0,
+            dist_right_m=2.0,
+            target_rel_yaw_rad=0.0,
+            target_dist_m=2.5,
+            has_fire=False,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(l_pwm, 100.0, "Must cruise forward when aligned with waypoint")
+        self.assertGreater(r_pwm, 100.0, "Must cruise forward when aligned with waypoint")
+        self.assertLess(abs(l_pwm - r_pwm), 25.0, "Left and right wheels must be balanced (no tail-chasing/spinning)")
+
+        # Aligned with waypoint with obstacle alongside on left (clearing obstacle)
+        l_side, r_side = self.numpy_runner.step(
+            dist_front_m=2.0,
+            dist_left_m=0.45,
+            dist_right_m=2.0,
+            target_rel_yaw_rad=0.0,
+            target_dist_m=2.5,
+            has_fire=False,
+            heading_rate_rads=0.0
+        )
+        self.assertGreater(l_side, 80.0, "Must maintain forward momentum while passing obstacle")
+        self.assertGreater(r_side, 80.0, "Must maintain forward momentum while passing obstacle")
+        self.assertLess(abs(l_side - r_side), 35.0, "Must cruise straight past obstacle without circular looping")
+
 
 if __name__ == "__main__":
     unittest.main()

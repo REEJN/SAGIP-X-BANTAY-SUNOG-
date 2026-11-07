@@ -51,6 +51,15 @@ class UIController {
     this.recentBboxAreas = [];
     this.mapper = null;
 
+    // Fixed Arena Exploration Waypoints (Eliminates rotating search destinations)
+    this.searchWaypoints = [
+      { x: 0.0, z: 2.2 },
+      { x: 2.2, z: 0.0 },
+      { x: 0.0, z: -2.2 },
+      { x: -2.2, z: 0.0 }
+    ];
+    this.searchWaypointIdx = 0;
+
     // Teleop key state
     this.activeKeys = new Set();
 
@@ -428,14 +437,14 @@ class UIController {
         }
       }
 
-      // If no active fire, project forward destination along current search heading
+      // If no active fire, track fixed arena exploration waypoint (does not rotate with robot)
       if (!goalPos) {
-        const fwdX = Math.sin(this.robot.yaw);
-        const fwdZ = Math.cos(this.robot.yaw);
-        goalPos = {
-          x: this.robot.position.x + fwdX * 2.5,
-          z: this.robot.position.z + fwdZ * 2.5
-        };
+        const curSearchWp = this.searchWaypoints[this.searchWaypointIdx];
+        const distToSearchWp = Math.hypot(curSearchWp.x - this.robot.position.x, curSearchWp.z - this.robot.position.z);
+        if (distToSearchWp < 0.65) {
+          this.searchWaypointIdx = (this.searchWaypointIdx + 1) % this.searchWaypoints.length;
+        }
+        goalPos = this.searchWaypoints[this.searchWaypointIdx];
       }
 
       this.latestAvoidance = this.mapper.update({
@@ -578,7 +587,7 @@ class UIController {
 
       const avoidance = this.latestAvoidance || (this.mapper ? this.mapper.findClearAvoidancePath(this.robot.position, this.robot.yaw, telem.dist_front, telem.dist_left, telem.dist_right, target) : null);
 
-      if (avoidance && avoidance.isObstacleAhead) {
+      if (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched)) {
         // Feed the predicted clear heading directly into the neural policy!
         // avoidance.clearAngle is smoothly computed and biased toward goal destination (fire or room path)
         targetRelYaw = avoidance.clearAngle;
@@ -612,7 +621,7 @@ class UIController {
 
       // 3. Active Mapping-Based Obstacle Avoidance & Path Following:
       // Steer decisively along the predicted path generated from the mapping!
-      if (avoidance && avoidance.isObstacleAhead) {
+      if (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched)) {
         const rec = avoidance.recommendedPwm;
         // Obstacle / wall proximity takes full priority to prevent collisions
         leftPwm = rec.left;
@@ -1135,9 +1144,9 @@ class UIController {
   computePredictionPath(telem) {
     if (!this.sim.predictionPath) return;
 
-    // 1. Predictive Avoidance Path from Mapping: when obstacle is ahead or committing to bypass corridor!
+    // 1. Predictive Avoidance Path from Mapping: when obstacle is ahead, path is latched, or committing to bypass corridor!
     const avoidance = this.latestAvoidance;
-    if (avoidance && (avoidance.isObstacleAhead || (avoidance.activeCorridor && avoidance.activeCorridor !== 'NONE')) && avoidance.worldPath && avoidance.worldPath.length > 1) {
+    if (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched || (avoidance.activeCorridor && avoidance.activeCorridor !== 'NONE')) && avoidance.worldPath && avoidance.worldPath.length > 1) {
       const avoid3DPoints = avoidance.worldPath.map(p => new THREE.Vector3(p.x, 0.015, p.z));
       this.sim.predictionPath.update(avoid3DPoints, 'avoid');
       return;

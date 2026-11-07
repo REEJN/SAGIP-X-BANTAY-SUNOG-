@@ -38,6 +38,12 @@ class UltrasonicMapper {
     this.minCommitDurationMs = 2000; // Lock into corridor for at least 2.0s
     this.isObstacleAheadState = false; // Schmitt-trigger hysteresis state
     this.smoothedClearAngle = 0.0;
+
+    // Latched World-Anchored Path (Eliminates tail-chasing and circular looping)
+    this.latchedWorldPath = null;
+    this.latchedWaypointIdx = 0;
+    this.latchedTimestamp = 0;
+    this.clearCorridorFrames = 0;
   }
 
   /**
@@ -281,96 +287,178 @@ class UltrasonicMapper {
     this.smoothedClearAngle = this.smoothedClearAngle * (1.0 - alpha) + bestAngle * alpha;
     const finalAngle = (Math.abs(this.smoothedClearAngle) < 0.03 && !isObstacleAhead) ? 0.0 : this.smoothedClearAngle;
 
-    // 8. Construct Smooth Predicted Trajectory Waypoints toward Destination
-    const localPath = [];
-    const worldPath = [];
+    // 8. World-Anchored Trajectory Latching (Eliminates tail-chasing and endless circulating)
+    let localPath = [];
+    let worldPath = [];
+    let isPathLatched = false;
 
-    localPath.push({ x: 0, y: 0 }); // Origin at robot center
-    if (robotPos) worldPath.push({ x: robotPos.x, z: robotPos.z });
-
-    const pathLength = isObstacleAhead ? 1.5 : 1.8;
-    const numWaypoints = 10;
-
-    for (let i = 1; i <= numWaypoints; i++) {
-      const frac = i / numWaypoints;
-      const s = frac * pathLength;
-
-      // First half: curve along finalAngle to circumvent obstacle
-      // Second half: smoothly reconnect trajectory towards desiredGoalAngle (destination)
-      let currentYaw;
-      if (frac <= 0.5) {
-        currentYaw = finalAngle * (frac / 0.5);
+    // Check if previously latched path should be released
+    if (this.latchedWorldPath && robotPos) {
+      const elapsed = now - this.latchedTimestamp;
+      if (minForwardDist > 1.25) {
+        this.clearCorridorFrames++;
       } else {
-        const blend = (frac - 0.5) / 0.5;
-        currentYaw = finalAngle * (1.0 - blend) + desiredGoalAngle * blend;
+        this.clearCorridorFrames = 0;
       }
 
-      const lx = Math.sin(currentYaw) * s;
-      const lz = Math.cos(currentYaw) * s;
+      const reachedEnd = this.latchedWaypointIdx >= this.latchedWorldPath.length - 1;
+      const corridorClear = (this.clearCorridorFrames > 25 && elapsed > 800);
+      const timedOut = (elapsed > 4500);
+      const blockedAhead = (minForwardDist < 0.25);
 
-      localPath.push({ x: lx, y: lz });
-
-      if (robotPos) {
-        const wx = robotPos.x + lx * cosY + lz * sinY;
-        const wz = robotPos.z - lx * sinY + lz * cosY;
-        worldPath.push({ x: wx, z: wz });
+      if (reachedEnd || corridorClear || timedOut || blockedAhead) {
+        this.latchedWorldPath = null;
+        this.clearCorridorFrames = 0;
       }
     }
 
-    // 9. Pure Pursuit Path Tracking & Decisive Obstacle Evasion:
-    // Follow the predicted trajectory (localPath) bead-for-bead!
+    if (!this.latchedWorldPath) {
+      if (isObstacleAhead && robotPos) {
+        // Plan fresh evasive trajectory and LATCH IT in World Space!
+        worldPath.push({ x: robotPos.x, z: robotPos.z });
+        localPath.push({ x: 0, y: 0 });
+
+        const pathLength = 1.6;
+        const numWaypoints = 10;
+        for (let i = 1; i <= numWaypoints; i++) {
+          const frac = i / numWaypoints;
+          const s = frac * pathLength;
+
+          let currentYaw;
+          if (frac <= 0.5) {
+            currentYaw = finalAngle * (frac / 0.5);
+          } else {
+            const blend = (frac - 0.5) / 0.5;
+            currentYaw = finalAngle * (1.0 - blend) + desiredGoalAngle * blend;
+          }
+
+          const lx = Math.sin(currentYaw) * s;
+          const lz = Math.cos(currentYaw) * s;
+          localPath.push({ x: lx, y: lz });
+
+          const wx = robotPos.x + lx * cosY + lz * sinY;
+          const wz = robotPos.z - lx * sinY + lz * cosY;
+          worldPath.push({ x: wx, z: wz });
+        }
+
+        // Anchor this trajectory to the arena floor!
+        this.latchedWorldPath = worldPath;
+        this.latchedWaypointIdx = 1;
+        this.latchedTimestamp = now;
+        isPathLatched = true;
+      } else if (robotPos) {
+        // Clear cruise toward goalPos:
+        // Build a direct path towards goalPos in world coordinates
+        localPath.push({ x: 0, y: 0 });
+        worldPath.push({ x: robotPos.x, z: robotPos.z });
+
+        const targetWorldBearing = (goalPos && robotPos)
+          ? Math.atan2(goalPos.x - robotPos.x, goalPos.z - robotPos.z)
+          : robotYaw;
+
+        const cruiseLength = 1.8;
+        const numWaypoints = 10;
+        for (let i = 1; i <= numWaypoints; i++) {
+          const s = (i / numWaypoints) * cruiseLength;
+          const wx = robotPos.x + Math.sin(targetWorldBearing) * s;
+          const wz = robotPos.z + Math.cos(targetWorldBearing) * s;
+          worldPath.push({ x: wx, z: wz });
+
+          const dx = wx - robotPos.x;
+          const dz = wz - robotPos.z;
+          const lx = dx * cosY - dz * sinY;
+          const lz = dx * sinY + dz * cosY;
+          localPath.push({ x: lx, y: lz });
+        }
+      }
+    } else if (robotPos) {
+      // Latched World Path is active!
+      // KEEP worldPath FIXED to the arena floor (do not rotate with robot)!
+      worldPath = this.latchedWorldPath;
+      isPathLatched = true;
+
+      // Transform the fixed world waypoints into current robot local coordinates
+      localPath.push({ x: 0, y: 0 });
+      for (let i = 1; i < worldPath.length; i++) {
+        const wp = worldPath[i];
+        const dx = wp.x - robotPos.x;
+        const dz = wp.z - robotPos.z;
+        const lx = dx * cosY - dz * sinY;
+        const lz = dx * sinY + dz * cosY;
+        localPath.push({ x: lx, y: lz });
+      }
+
+      // Check distance to current target waypoint to advance along the path
+      const currentWp = worldPath[this.latchedWaypointIdx];
+      if (currentWp) {
+        const distToWp = Math.hypot(currentWp.x - robotPos.x, currentWp.z - robotPos.z);
+        if (distToWp < 0.35 && this.latchedWaypointIdx < worldPath.length - 1) {
+          this.latchedWaypointIdx++;
+        }
+      }
+    }
+
+    // 9. Pure Pursuit Path Tracking & Heading Convergence:
     let recLeft = 145;
     let recRight = 145;
 
-    // Pick lookahead point ~0.6m ahead along predicted localPath
-    const lookaheadIdx = Math.min(localPath.length - 1, 4);
+    // Pick lookahead point along localPath:
+    let lookaheadIdx = 3;
+    if (isPathLatched) {
+      lookaheadIdx = Math.min(localPath.length - 1, Math.max(1, this.latchedWaypointIdx));
+    }
     const lookaheadWp = localPath[lookaheadIdx] || { x: 0, y: 1.0 };
+    // Bearing to lookahead point in robot's local body frame:
     const pathYaw = Math.atan2(lookaheadWp.x, lookaheadWp.y);
 
     if (minForwardDist < 0.28) {
       // Emergency reverse: immediately back out away from obstacle / wall!
       recLeft = -160;
       recRight = -160;
-    } else if (isObstacleAhead) {
+    } else if (isObstacleAhead || (isPathLatched && minForwardDist < 0.70)) {
       // Decelerate proportional to proximity to wall/obstacle
       const proximityFactor = Math.max(0.0, Math.min(1.0, (minForwardDist - 0.28) / 0.55));
-      const baseFwd = Math.round(40 + proximityFactor * 85); // 40 to 125 PWM
+      const baseFwd = Math.round(50 + proximityFactor * 90); // 50 to 140 PWM
 
-      if (minForwardDist < 0.45) {
-        // High proximity: spin in place without driving into the wall!
+      if (minForwardDist < 0.42 && Math.abs(pathYaw) > 0.45) {
+        // High proximity and large angular error: spin pivot in place toward the waypoint!
         const turnDir = (pathYaw >= 0) ? 1 : -1;
         recLeft = turnDir * 165;
         recRight = -turnDir * 165;
       } else {
-        // Controlled bypass curve along predicted path
-        const turnRate = Math.min(140, Math.abs(pathYaw) * 160 + (1.0 - proximityFactor) * 50);
-        if (pathYaw > 0.05) {
+        // Controlled pure pursuit curve along fixed world path:
+        // As pathYaw shrinks toward 0, turnRate shrinks to 0, driving straight forward!
+        const turnRate = Math.min(130, Math.abs(pathYaw) * 150);
+        if (pathYaw > 0.06) {
           recLeft = Math.min(220, baseFwd + turnRate);
-          recRight = Math.max(-110, baseFwd - turnRate);
-        } else if (pathYaw < -0.05) {
+          recRight = Math.max(-90, baseFwd - turnRate);
+        } else if (pathYaw < -0.06) {
           recRight = Math.min(220, baseFwd + turnRate);
-          recLeft = Math.max(-110, baseFwd - turnRate);
+          recLeft = Math.max(-90, baseFwd - turnRate);
         } else {
-          recLeft = baseFwd;
-          recRight = baseFwd;
+          // Aligned with waypoint: drive straight forward!
+          recLeft = baseFwd + 20;
+          recRight = baseFwd + 20;
         }
       }
     } else {
       // Clear path cruising: follow predicted path towards destination
-      const trim = Math.min(75, pathYaw * 90);
+      const trim = Math.min(65, pathYaw * 80);
       recLeft = Math.round(145 + trim);
       recRight = Math.round(145 - trim);
     }
 
     const angleDeg = Math.round((finalAngle * 180) / Math.PI);
     let pathStatus = 'CLEAR';
-    if (isObstacleAhead) {
-      pathStatus = finalAngle >= 0 ? `AVOID RIGHT (+${angleDeg}°)` : `AVOID LEFT (${angleDeg}°)`;
+    if (isPathLatched || isObstacleAhead) {
+      pathStatus = finalAngle >= 0 ? `BYPASS RIGHT (+${angleDeg}°)` : `BYPASS LEFT (${angleDeg}°)`;
     }
 
     return {
       isObstacleAhead,
-      clearAngle: finalAngle,
+      isPathLatched,
+      clearAngle: pathYaw, // Heading error to the lookahead waypoint
+      pathYaw: pathYaw,
       recommendedPwm: { left: recLeft, right: recRight },
       pathStatus,
       localPath,
