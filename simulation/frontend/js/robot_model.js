@@ -331,9 +331,9 @@ class RobotModel {
       targetVRight = (this.rightPwm / 255.0) * this.maxSpeed;
     }
 
-    // Target linear and angular speeds
+    // Target linear and angular speeds (matching arena_sim.py: v_left > v_right turns right)
     const targetLinearSpeed = (targetVLeft + targetVRight) / 2.0;
-    const targetAngularSpeed = (targetVRight - targetVLeft) / this.trackWidth;
+    const targetAngularSpeed = (targetVLeft - targetVRight) / this.trackWidth;
 
     // Apply linear acceleration / braking inertia
     const linearDiff = targetLinearSpeed - this.currentLinearSpeed;
@@ -495,8 +495,8 @@ class RobotModel {
     // -------------------------------------------------------------------------
     // 4. Animate Wheel Rotations Proportional to Actual Speed
     // -------------------------------------------------------------------------
-    const actualVLeft = this.currentLinearSpeed - (this.currentAngularSpeed * this.trackWidth / 2.0);
-    const actualVRight = this.currentLinearSpeed + (this.currentAngularSpeed * this.trackWidth / 2.0);
+    const actualVLeft = this.currentLinearSpeed + (this.currentAngularSpeed * this.trackWidth / 2.0);
+    const actualVRight = this.currentLinearSpeed - (this.currentAngularSpeed * this.trackWidth / 2.0);
 
     const leftSpin = (actualVLeft / this.wheelRadius) * dt;
     const rightSpin = (actualVRight / this.wheelRadius) * dt;

@@ -611,17 +611,17 @@ class UIController {
       rightPwm = overcomeFriction(rightPwm);
 
       // 3. Active Mapping-Based Obstacle Avoidance & Path Following:
-      // Steer decisively along the predicted new path generated from the mapping!
+      // Steer decisively along the predicted path generated from the mapping!
       if (avoidance && avoidance.isObstacleAhead) {
         const rec = avoidance.recommendedPwm;
-        if (Math.abs(leftPwm) < 70 && Math.abs(rightPwm) < 70) {
-          leftPwm = rec.left;
-          rightPwm = rec.right;
-        } else {
-          // Harmonize neural model output with predictive mapping guidance
-          leftPwm = Math.round(leftPwm * 0.40 + rec.left * 0.60);
-          rightPwm = Math.round(rightPwm * 0.40 + rec.right * 0.60);
-        }
+        // Obstacle / wall proximity takes full priority to prevent collisions
+        leftPwm = rec.left;
+        rightPwm = rec.right;
+      } else if (avoidance && avoidance.recommendedPwm) {
+        // Clear cruise: harmonize neural policy with pure-pursuit path tracking
+        const rec = avoidance.recommendedPwm;
+        leftPwm = Math.round(leftPwm * 0.40 + rec.left * 0.60);
+        rightPwm = Math.round(rightPwm * 0.40 + rec.right * 0.60);
       }
 
       // 4. Force recovery burst if stalled in front of an obstacle for > 0.35s

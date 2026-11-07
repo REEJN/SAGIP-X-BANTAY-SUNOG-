@@ -85,6 +85,59 @@ class UltrasonicMapper {
     if (mL < 2.5) localObstacles.push({ x: Math.sin(-Math.PI / 4) * mL, z: Math.cos(-Math.PI / 4) * mL, weight: 1.5 });
     if (mR < 2.5) localObstacles.push({ x: Math.sin(Math.PI / 4) * mR, z: Math.cos(Math.PI / 4) * mR, weight: 1.5 });
 
+    // 3. Add virtual arena wall samples to prevent wall collisions in all orientations
+    if (robotPos) {
+      const wallLimit = 4.22; // meters from arena center to inner wall face
+      // East wall (X = +wallLimit)
+      if (wallLimit - robotPos.x < 2.8) {
+        for (let wz = Math.max(-wallLimit, robotPos.z - 2.2); wz <= Math.min(wallLimit, robotPos.z + 2.2); wz += 0.30) {
+          const dx = wallLimit - robotPos.x;
+          const dz = wz - robotPos.z;
+          const lx = dx * cosY - dz * sinY;
+          const lz = dx * sinY + dz * cosY;
+          if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.4) {
+            localObstacles.push({ x: lx, z: lz, weight: 3.0 });
+          }
+        }
+      }
+      // West wall (X = -wallLimit)
+      if (robotPos.x - (-wallLimit) < 2.8) {
+        for (let wz = Math.max(-wallLimit, robotPos.z - 2.2); wz <= Math.min(wallLimit, robotPos.z + 2.2); wz += 0.30) {
+          const dx = -wallLimit - robotPos.x;
+          const dz = wz - robotPos.z;
+          const lx = dx * cosY - dz * sinY;
+          const lz = dx * sinY + dz * cosY;
+          if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.4) {
+            localObstacles.push({ x: lx, z: lz, weight: 3.0 });
+          }
+        }
+      }
+      // North wall (Z = +wallLimit)
+      if (wallLimit - robotPos.z < 2.8) {
+        for (let wx = Math.max(-wallLimit, robotPos.x - 2.2); wx <= Math.min(wallLimit, robotPos.x + 2.2); wx += 0.30) {
+          const dx = wx - robotPos.x;
+          const dz = wallLimit - robotPos.z;
+          const lx = dx * cosY - dz * sinY;
+          const lz = dx * sinY + dz * cosY;
+          if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.4) {
+            localObstacles.push({ x: lx, z: lz, weight: 3.0 });
+          }
+        }
+      }
+      // South wall (Z = -wallLimit)
+      if (robotPos.z - (-wallLimit) < 2.8) {
+        for (let wx = Math.max(-wallLimit, robotPos.x - 2.2); wx <= Math.min(wallLimit, robotPos.x + 2.2); wx += 0.30) {
+          const dx = wx - robotPos.x;
+          const dz = -wallLimit - robotPos.z;
+          const lx = dx * cosY - dz * sinY;
+          const lz = dx * sinY + dz * cosY;
+          if (lz > 0.05 && lz < 2.8 && Math.abs(lx) < 2.4) {
+            localObstacles.push({ x: lx, z: lz, weight: 3.0 });
+          }
+        }
+      }
+    }
+
     // 3. Check if forward collision corridor is blocked (with Schmitt-trigger hysteresis)
     const forwardCorridorHalfW = 0.28;
     let minForwardDist = mF;
@@ -264,23 +317,47 @@ class UltrasonicMapper {
       }
     }
 
-    // 9. Compute recommended differential drive motor PWM
-    let recLeft = 150;
-    let recRight = 150;
+    // 9. Pure Pursuit Path Tracking & Decisive Obstacle Evasion:
+    // Follow the predicted trajectory (localPath) bead-for-bead!
+    let recLeft = 145;
+    let recRight = 145;
 
-    if (isObstacleAhead) {
-      if (finalAngle > 0.06) {
-        // Committed rightward bypass
-        recLeft = 160;
-        recRight = Math.max(35, Math.round(160 - finalAngle * 125));
-      } else if (finalAngle < -0.06) {
-        // Committed leftward bypass
-        recRight = 160;
-        recLeft = Math.max(35, Math.round(160 - Math.abs(finalAngle) * 125));
+    // Pick lookahead point ~0.6m ahead along predicted localPath
+    const lookaheadIdx = Math.min(localPath.length - 1, 4);
+    const lookaheadWp = localPath[lookaheadIdx] || { x: 0, y: 1.0 };
+    const pathYaw = Math.atan2(lookaheadWp.x, lookaheadWp.y);
+
+    if (minForwardDist < 0.28) {
+      // Emergency reverse: immediately back out away from obstacle / wall!
+      recLeft = -160;
+      recRight = -160;
+    } else if (isObstacleAhead) {
+      // Decelerate proportional to proximity to wall/obstacle
+      const proximityFactor = Math.max(0.0, Math.min(1.0, (minForwardDist - 0.28) / 0.55));
+      const baseFwd = Math.round(40 + proximityFactor * 85); // 40 to 125 PWM
+
+      if (minForwardDist < 0.45) {
+        // High proximity: spin in place without driving into the wall!
+        const turnDir = (pathYaw >= 0) ? 1 : -1;
+        recLeft = turnDir * 165;
+        recRight = -turnDir * 165;
+      } else {
+        // Controlled bypass curve along predicted path
+        const turnRate = Math.min(140, Math.abs(pathYaw) * 160 + (1.0 - proximityFactor) * 50);
+        if (pathYaw > 0.05) {
+          recLeft = Math.min(220, baseFwd + turnRate);
+          recRight = Math.max(-110, baseFwd - turnRate);
+        } else if (pathYaw < -0.05) {
+          recRight = Math.min(220, baseFwd + turnRate);
+          recLeft = Math.max(-110, baseFwd - turnRate);
+        } else {
+          recLeft = baseFwd;
+          recRight = baseFwd;
+        }
       }
-    } else if (Math.abs(desiredGoalAngle) > 0.08) {
-      // Steer toward goal destination
-      const trim = Math.min(65, desiredGoalAngle * 75);
+    } else {
+      // Clear path cruising: follow predicted path towards destination
+      const trim = Math.min(75, pathYaw * 90);
       recLeft = Math.round(145 + trim);
       recRight = Math.round(145 - trim);
     }
