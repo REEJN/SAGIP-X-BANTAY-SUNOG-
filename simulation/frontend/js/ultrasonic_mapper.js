@@ -11,6 +11,323 @@
  * - Exponential Moving Average (EMA) Heading Smoothing (eliminates jitter and twitching)
  */
 
+/**
+ * BANTAY-SUNOG 2D Exploration & Occupancy Grid
+ * Discrete 2D occupancy and coverage map covering 9.0m x 9.0m at 0.20m resolution.
+ * Tracks discovered free space, scanned obstacle boundaries, cell visit frequency,
+ * and frontier boundaries leading into undiscovered areas.
+ */
+class ExplorationGrid {
+  constructor(sizeMeters = 9.0, resolution = 0.20) {
+    this.sizeMeters = sizeMeters;
+    this.resolution = resolution;
+    this.halfSize = sizeMeters / 2;
+    this.gridWidth = Math.round(sizeMeters / resolution);  // 45
+    this.gridHeight = Math.round(sizeMeters / resolution); // 45
+    this.totalCells = this.gridWidth * this.gridHeight;    // 2025
+
+    // Cell states: 0 = UNDISCOVERED, 1 = FREE, 2 = OCCUPIED
+    this.cells = new Uint8Array(this.totalCells);
+    // Visit count: increments when robot moves through cell
+    this.visitCounts = new Uint16Array(this.totalCells);
+
+    this.discoveredCount = 0;
+  }
+
+  reset() {
+    this.cells.fill(0);
+    this.visitCounts.fill(0);
+    this.discoveredCount = 0;
+  }
+
+  worldToGrid(x, z) {
+    const gx = Math.floor((x + this.halfSize) / this.resolution);
+    const gz = Math.floor((z + this.halfSize) / this.resolution);
+    if (gx < 0 || gx >= this.gridWidth || gz < 0 || gz >= this.gridHeight) return null;
+    return { gx, gz, idx: gz * this.gridWidth + gx };
+  }
+
+  gridToWorld(gx, gz) {
+    const x = (gx + 0.5) * this.resolution - this.halfSize;
+    const z = (gz + 0.5) * this.resolution - this.halfSize;
+    return { x, z };
+  }
+
+  getCell(gx, gz) {
+    if (gx < 0 || gx >= this.gridWidth || gz < 0 || gz >= this.gridHeight) return 0;
+    return this.cells[gz * this.gridWidth + gx];
+  }
+
+  setCell(gx, gz, state) {
+    if (gx < 0 || gx >= this.gridWidth || gz < 0 || gz >= this.gridHeight) return;
+    const idx = gz * this.gridWidth + gx;
+    const prev = this.cells[idx];
+    if (prev === 0 && state !== 0) {
+      this.discoveredCount++;
+    }
+    // OCCUPIED (2) overrides FREE (1); once marked OCCUPIED, stays OCCUPIED
+    if (prev !== 2 || state === 2) {
+      this.cells[idx] = state;
+    }
+  }
+
+  recordRobotPose(x, z) {
+    const g = this.worldToGrid(x, z);
+    if (g) {
+      this.setCell(g.gx, g.gz, 1);
+      this.visitCounts[g.idx]++;
+      // Mark immediate footprint of differential drive chassis (~0.22m)
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const nx = g.gx + dx;
+          const nz = g.gz + dz;
+          if (nx >= 0 && nx < this.gridWidth && nz >= 0 && nz < this.gridHeight) {
+            this.setCell(nx, nz, 1);
+          }
+        }
+      }
+    }
+  }
+
+  updateBeam(robotX, robotZ, beamAngle, distanceM) {
+    const g0 = this.worldToGrid(robotX, robotZ);
+    if (!g0) return;
+
+    const hitX = robotX + Math.sin(beamAngle) * distanceM;
+    const hitZ = robotZ + Math.cos(beamAngle) * distanceM;
+    const g1 = this.worldToGrid(hitX, hitZ);
+    if (!g1) return;
+
+    // Bresenham line raycasting
+    let x0 = g0.gx, y0 = g0.gz;
+    const x1 = g1.gx, y1 = g1.gz;
+    const dx = Math.abs(x1 - x0);
+    const dy = Math.abs(y1 - y0);
+    const sx = (x0 < x1) ? 1 : -1;
+    const sy = (y0 < y1) ? 1 : -1;
+    let err = dx - dy;
+
+    while (true) {
+      if (x0 === x1 && y0 === y1) {
+        if (distanceM < 2.85) {
+          this.setCell(x0, y0, 2); // OCCUPIED obstacle boundary
+        } else {
+          this.setCell(x0, y0, 1); // FREE at maximum range
+        }
+        break;
+      }
+      this.setCell(x0, y0, 1); // Free space carved by optical beam
+
+      const e2 = 2 * err;
+      if (e2 > -dy) { err -= dy; x0 += sx; }
+      if (e2 < dx) { err += dx; y0 += sy; }
+    }
+  }
+
+  getCoveragePercentage() {
+    return Math.min(100, Math.round((this.discoveredCount / (this.totalCells * 0.75)) * 100));
+  }
+
+  findFrontierGoals(robotPos, exclusionCentroid = null, exclusionRadius = 1.8) {
+    const frontiers = [];
+    const minWallDist = 1; // clearance from known walls
+
+    for (let gz = 2; gz < this.gridHeight - 2; gz++) {
+      for (let gx = 2; gx < this.gridWidth - 2; gx++) {
+        const idx = gz * this.gridWidth + gx;
+        if (this.cells[idx] !== 0) continue; // Must be UNDISCOVERED
+
+        let hasFreeNeighbor = false;
+        let nearOccupied = false;
+
+        for (let dz = -1; dz <= 1; dz++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dz === 0) continue;
+            const nState = this.getCell(gx + dx, gz + dz);
+            if (nState === 1) hasFreeNeighbor = true;
+            if (nState === 2) nearOccupied = true;
+          }
+        }
+
+        if (hasFreeNeighbor && !nearOccupied) {
+          let clearOfWalls = true;
+          for (let dz = -minWallDist; dz <= minWallDist; dz++) {
+            for (let dx = -minWallDist; dx <= minWallDist; dx++) {
+              if (this.getCell(gx + dx, gz + dz) === 2) {
+                clearOfWalls = false;
+                break;
+              }
+            }
+            if (!clearOfWalls) break;
+          }
+
+          if (clearOfWalls) {
+            const worldPt = this.gridToWorld(gx, gz);
+            frontiers.push({ gx, gz, x: worldPt.x, z: worldPt.z });
+          }
+        }
+      }
+    }
+
+    if (frontiers.length === 0) return null;
+
+    // Cluster frontiers into candidate destination zones
+    const clusters = [];
+    frontiers.forEach(f => {
+      let found = false;
+      for (const c of clusters) {
+        if (Math.hypot(c.x - f.x, c.z - f.z) < 0.9) {
+          c.points.push(f);
+          c.x = (c.x * (c.points.length - 1) + f.x) / c.points.length;
+          c.z = (c.z * (c.points.length - 1) + f.z) / c.points.length;
+          found = true;
+          break;
+        }
+      }
+      if (!found) {
+        clusters.push({ x: f.x, z: f.z, points: [f] });
+      }
+    });
+
+    let bestGoal = null;
+    let maxScore = -999999;
+
+    clusters.forEach(c => {
+      const dist = robotPos ? Math.hypot(c.x - robotPos.x, c.z - robotPos.z) : 1.0;
+      const infoGain = c.points.length;
+
+      let score = infoGain * 14.0 - dist * 6.5;
+
+      // Penalize frontiers inside or near the loop exclusion zone
+      if (exclusionCentroid) {
+        const distToExcl = Math.hypot(c.x - exclusionCentroid.x, c.z - exclusionCentroid.z);
+        if (distToExcl < exclusionRadius) {
+          score -= 400.0; // Avoid returning into the circulating area
+        } else {
+          score += distToExcl * 15.0; // Strong bonus for frontiers far from the loop
+        }
+      }
+
+      if (score > maxScore) {
+        maxScore = score;
+        bestGoal = { x: c.x, z: c.z, clusterSize: infoGain, dist };
+      }
+    });
+
+    return bestGoal;
+  }
+}
+
+/**
+ * BANTAY-SUNOG Path Memory & Circulation Loop Detector
+ * Maintains a rolling breadcrumb trajectory history. Detects when the robot is
+ * trapped circulating or looping in a localized area, and manages escape state.
+ */
+class CirculationDetector {
+  constructor() {
+    this.pathHistory = []; // Array of { x, z, yaw, time }
+    this.maxHistoryMs = 18000; // Rolling 18-second history window
+    this.sampleIntervalMs = 250;
+    this.lastSampleTime = 0;
+
+    this.isCirculating = false;
+    this.circulationCentroid = null; // { x, z, radius }
+    this.circulationStartTime = 0;
+    this.escapeLockDurationMs = 6000;
+  }
+
+  reset() {
+    this.pathHistory = [];
+    this.isCirculating = false;
+    this.circulationCentroid = null;
+  }
+
+  update(robotPos, robotYaw, now) {
+    if (!robotPos) return this.isCirculating;
+
+    if (now - this.lastSampleTime >= this.sampleIntervalMs) {
+      this.lastSampleTime = now;
+      this.pathHistory.push({
+        x: robotPos.x,
+        z: robotPos.z,
+        yaw: robotYaw,
+        time: now
+      });
+    }
+
+    // Prune stale breadcrumbs
+    this.pathHistory = this.pathHistory.filter(p => now - p.time <= this.maxHistoryMs);
+
+    // If currently in escape mode, check if loop has been successfully broken
+    if (this.isCirculating) {
+      if (this.circulationCentroid) {
+        const distFromCentroid = Math.hypot(robotPos.x - this.circulationCentroid.x, robotPos.z - this.circulationCentroid.z);
+        const elapsed = now - this.circulationStartTime;
+
+        // Escape success: robot moved > 1.8m away from loop center OR timeout reached
+        if (distFromCentroid >= 1.75 || elapsed > this.escapeLockDurationMs) {
+          this.isCirculating = false;
+          this.circulationCentroid = null;
+          this.pathHistory = this.pathHistory.filter(p => now - p.time <= 3000);
+          console.log('[CirculationDetector] Loop broken! Successfully escaped to new area.');
+          return false;
+        }
+      }
+      return true;
+    }
+
+    // Evaluate circulation only with at least 5 seconds of movement (~20 samples)
+    if (this.pathHistory.length < 20) return false;
+
+    // 1. Total path distance traveled
+    let totalPathDist = 0;
+    for (let i = 1; i < this.pathHistory.length; i++) {
+      totalPathDist += Math.hypot(
+        this.pathHistory[i].x - this.pathHistory[i - 1].x,
+        this.pathHistory[i].z - this.pathHistory[i - 1].z
+      );
+    }
+
+    if (totalPathDist < 3.8) return false; // Must be driving continuously
+
+    // 2. Centroid and dispersion radius
+    let sumX = 0, sumZ = 0;
+    this.pathHistory.forEach(p => { sumX += p.x; sumZ += p.z; });
+    const cx = sumX / this.pathHistory.length;
+    const cz = sumZ / this.pathHistory.length;
+
+    let maxRadius = 0;
+    this.pathHistory.forEach(p => {
+      const r = Math.hypot(p.x - cx, p.z - cz);
+      if (r > maxRadius) maxRadius = r;
+    });
+
+    // 3. Cumulative angular rotation
+    let totalYawDelta = 0;
+    for (let i = 1; i < this.pathHistory.length; i++) {
+      let dy = this.pathHistory[i].yaw - this.pathHistory[i - 1].yaw;
+      while (dy > Math.PI) dy -= Math.PI * 2;
+      while (dy < -Math.PI) dy += Math.PI * 2;
+      totalYawDelta += Math.abs(dy);
+    }
+
+    // Trapped Loop Trigger:
+    // Traveled >= 3.8m within a tight radius (<= 1.25m) OR accumulated > 3.5pi rotation in tight area
+    const isConfinedLoop = (maxRadius <= 1.25 && totalPathDist >= 3.8);
+    const isSpinningLoop = (maxRadius <= 1.35 && totalYawDelta >= 3.5 * Math.PI && totalPathDist >= 2.8);
+
+    if (isConfinedLoop || isSpinningLoop) {
+      this.isCirculating = true;
+      this.circulationCentroid = { x: cx, z: cz, radius: Math.max(1.3, maxRadius + 0.3) };
+      this.circulationStartTime = now;
+      console.warn(`[CirculationDetector] LOOP DETECTED! Path: ${totalPathDist.toFixed(1)}m, Radius: ${maxRadius.toFixed(2)}m. Engaging Escape Protocol!`);
+      return true;
+    }
+
+    return false;
+  }
+}
+
 class UltrasonicMapper {
   constructor(canvasId = 'map-canvas') {
     this.canvas = document.getElementById(canvasId);
@@ -44,6 +361,20 @@ class UltrasonicMapper {
     this.latchedWaypointIdx = 0;
     this.latchedTimestamp = 0;
     this.clearCorridorFrames = 0;
+
+    // Persistent Exploration Grid & Circulation Detection
+    this.explorationGrid = new ExplorationGrid(9.0, 0.20);
+    this.circulationDetector = new CirculationDetector();
+    this.currentFrontierGoal = null;
+    this.lastFrontierCompute = 0;
+  }
+
+  resetMap() {
+    this.pointCloud = [];
+    this.explorationGrid.reset();
+    this.circulationDetector.reset();
+    this.currentFrontierGoal = null;
+    this.latchedWorldPath = null;
   }
 
   /**
@@ -316,6 +647,20 @@ class UltrasonicMapper {
         score -= 40.0;
       }
 
+      // Circulation Escape: heavily penalize steering towards the loop centroid
+      if (this.circulationDetector.isCirculating && this.circulationDetector.circulationCentroid && robotPos) {
+        const toCentroidX = this.circulationDetector.circulationCentroid.x - robotPos.x;
+        const toCentroidZ = this.circulationDetector.circulationCentroid.z - robotPos.z;
+        const centroidBearing = Math.atan2(toCentroidX, toCentroidZ);
+        let centroidDiff = centroidBearing - robotYaw;
+        while (centroidDiff > Math.PI) centroidDiff -= Math.PI * 2;
+        while (centroidDiff < -Math.PI) centroidDiff += Math.PI * 2;
+        const devFromCentroid = Math.abs(angle - centroidDiff);
+        if (devFromCentroid < 0.70) {
+          score -= 75.0; // Prevent steering towards the trapped center
+        }
+      }
+
       if (score > maxScore) {
         maxScore = score;
         bestAngle = angle;
@@ -358,7 +703,10 @@ class UltrasonicMapper {
     if (!this.latchedWorldPath) {
       if (classification.type === 'WALL' && minForwardDist < 0.75) {
         // Wall Encountered: Generate 90deg lane-turn arc into adjacent sweep lane
-        const turnSign = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+        let turnSign = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+        if (Math.abs(desiredGoalAngle) > 0.25) {
+          turnSign = (desiredGoalAngle > 0) ? 1 : -1;
+        }
         const turnAngle = turnSign * (Math.PI / 2);
         localPath.push({ x: 0, y: 0 });
         if (robotPos) worldPath.push({ x: robotPos.x, z: robotPos.z });
@@ -516,10 +864,14 @@ class UltrasonicMapper {
 
     const angleDeg = Math.round((finalAngle * 180) / Math.PI);
     let pathStatus = 'LANE SWEEP';
-    if (classification.type === 'WALL' && minForwardDist < 0.85) {
+    if (this.circulationDetector.isCirculating) {
+      pathStatus = 'LOOP ESCAPE (AVOID CORRIDOR)';
+    } else if (classification.type === 'WALL' && minForwardDist < 0.85) {
       pathStatus = `WALL (ZIGZAG 90° ${classification.flankClearSide})`;
     } else if (classification.type === 'OBSTACLE' && (isPathLatched || isObstacleAhead)) {
       pathStatus = `OBSTACLE (BYPASS ${classification.flankClearSide})`;
+    } else if (goalPos) {
+      pathStatus = 'FRONTIER (EXPLORE NEW AREA)';
     }
 
     return {
@@ -533,7 +885,11 @@ class UltrasonicMapper {
       localPath,
       worldPath,
       sectorClearances,
-      activeCorridor: this.activeCorridor
+      activeCorridor: this.activeCorridor,
+      isCirculating: this.circulationDetector.isCirculating,
+      circulationCentroid: this.circulationDetector.circulationCentroid,
+      frontierGoal: this.currentFrontierGoal,
+      coveragePercent: this.explorationGrid.getCoveragePercentage()
     };
   }
 
@@ -576,31 +932,68 @@ class UltrasonicMapper {
     this.pulseAnim = (this.pulseAnim + 0.05) % (Math.PI * 2);
 
     // -------------------------------------------------------------------------
-    // 1. Maintain World-Relative Point Cloud
+    // 1. Maintain Exploration Grid & Circulation Loop Detector
     // -------------------------------------------------------------------------
-    if (robotPos && now - this.lastPointAdd > 80) {
-      this.lastPointAdd = now;
+    if (robotPos) {
+      // 1.1 Update robot footprint in persistent exploration grid
+      this.explorationGrid.recordRobotPose(robotPos.x, robotPos.z);
+
       const beams = [
         { dist: (distF || 300) / 100, angle: 0 },
         { dist: (distL || 300) / 100, angle: -Math.PI / 4 },
         { dist: (distR || 300) / 100, angle: Math.PI / 4 }
       ];
 
+      // 1.2 Raycast ultrasonic beams to carve free space & mark obstacles
       beams.forEach(b => {
-        if (b.dist > 0.05 && b.dist < 3.0) {
+        if (b.dist > 0.05 && b.dist < 3.2) {
           const beamWorldAngle = robotYaw + b.angle;
-          const hitX = robotPos.x + Math.sin(beamWorldAngle) * b.dist;
-          const hitZ = robotPos.z + Math.cos(beamWorldAngle) * b.dist;
-          this.pointCloud.push({ worldX: hitX, worldZ: hitZ, time: now });
+          this.explorationGrid.updateBeam(robotPos.x, robotPos.z, beamWorldAngle, b.dist);
         }
       });
+
+      // 1.3 Localized point cloud for reactive obstacle bypass
+      if (now - this.lastPointAdd > 80) {
+        this.lastPointAdd = now;
+        beams.forEach(b => {
+          if (b.dist > 0.05 && b.dist < 3.0) {
+            const beamWorldAngle = robotYaw + b.angle;
+            const hitX = robotPos.x + Math.sin(beamWorldAngle) * b.dist;
+            const hitZ = robotPos.z + Math.cos(beamWorldAngle) * b.dist;
+            this.pointCloud.push({ worldX: hitX, worldZ: hitZ, time: now });
+          }
+        });
+      }
+
+      // 1.4 Path History & Loop / Circulation Detection
+      this.circulationDetector.update(robotPos, robotYaw, now);
+
+      // 1.5 Update Frontier Goal (every 750ms or if none active)
+      if (now - this.lastFrontierCompute > 750 || !this.currentFrontierGoal) {
+        this.lastFrontierCompute = now;
+        if (this.circulationDetector.isCirculating) {
+          // Select frontier outside the trapped loop exclusion zone!
+          this.currentFrontierGoal = this.explorationGrid.findFrontierGoals(
+            robotPos,
+            this.circulationDetector.circulationCentroid,
+            this.circulationDetector.circulationCentroid ? this.circulationDetector.circulationCentroid.radius : 1.8
+          );
+        } else {
+          this.currentFrontierGoal = this.explorationGrid.findFrontierGoals(robotPos);
+        }
+      }
     }
 
-    // Prune stale points
+    // Prune stale point cloud points
     this.pointCloud = this.pointCloud.filter(p => now - p.time <= this.maxPointAgeMs);
 
+    // If searching (no fire) and a frontier goal exists, route towards it
+    const effectiveGoalPos = (hasFire || (target && target.confidence > 0.4))
+      ? null
+      : (goalPos || this.currentFrontierGoal);
+
     // Predict stable, destination-directed avoidance path from mapping
-    const avoidance = this.findClearAvoidancePath(robotPos, robotYaw, distF, distL, distR, target, goalPos, hasFire);
+    const avoidance = this.findClearAvoidancePath(robotPos, robotYaw, distF, distL, distR, target, effectiveGoalPos, hasFire);
     this.latestAvoidance = avoidance;
 
     // -------------------------------------------------------------------------
@@ -664,17 +1057,79 @@ class UltrasonicMapper {
     });
 
     // -------------------------------------------------------------------------
-    // 4. Draw Projected Obstacle Point Cloud (SLAM Memory)
+    // 4. Draw Persistent Explored Free Space & SLAM Map
     // -------------------------------------------------------------------------
-    if (robotPos && this.pointCloud.length > 0) {
+    if (robotPos) {
       const cosY = Math.cos(robotYaw);
       const sinY = Math.sin(robotYaw);
 
+      // 4.1 Draw explored free space cells in radar view
+      const grid = this.explorationGrid;
+      const robotG = grid.worldToGrid(robotPos.x, robotPos.z);
+      if (robotG) {
+        const checkRad = Math.ceil(this.maxRangeMeters / grid.resolution);
+        const minGx = Math.max(0, robotG.gx - checkRad);
+        const maxGx = Math.min(grid.gridWidth - 1, robotG.gx + checkRad);
+        const minGz = Math.max(0, robotG.gz - checkRad);
+        const maxGz = Math.min(grid.gridHeight - 1, robotG.gz + checkRad);
+
+        for (let gz = minGz; gz <= maxGz; gz++) {
+          for (let gx = minGx; gx <= maxGx; gx++) {
+            const state = grid.getCell(gx, gz);
+            if (state === 0) continue; // Undiscovered
+
+            const wpt = grid.gridToWorld(gx, gz);
+            const dx = wpt.x - robotPos.x;
+            const dz = wpt.z - robotPos.z;
+            const localX = dx * cosY - dz * sinY;
+            const localForward = dx * sinY + dz * cosY;
+
+            if (localForward > -0.2 && localForward <= this.maxRangeMeters && Math.abs(localX) <= 2.2) {
+              const px = cx + localX * meterToPx;
+              const py = cy - localForward * meterToPx;
+              const cellPx = grid.resolution * meterToPx;
+
+              if (state === 1) {
+                // Free space tile
+                ctx.fillStyle = 'rgba(56, 189, 248, 0.08)';
+                ctx.fillRect(px - cellPx / 2, py - cellPx / 2, cellPx, cellPx);
+              } else if (state === 2) {
+                // Occupied obstacle cell
+                ctx.fillStyle = 'rgba(0, 240, 255, 0.40)';
+                ctx.fillRect(px - cellPx / 2, py - cellPx / 2, cellPx, cellPx);
+              }
+            }
+          }
+        }
+      }
+
+      // 4.2 Draw Breadcrumb Trajectory History Trail
+      const history = this.circulationDetector.pathHistory;
+      if (history.length > 1) {
+        ctx.strokeStyle = 'rgba(0, 210, 255, 0.30)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath();
+        let first = true;
+        for (let i = 0; i < history.length; i++) {
+          const pt = history[i];
+          const dx = pt.x - robotPos.x;
+          const dz = pt.z - robotPos.z;
+          const lx = dx * cosY - dz * sinY;
+          const lz = dx * sinY + dz * cosY;
+          const px = cx + lx * meterToPx;
+          const py = cy - lz * meterToPx;
+          if (first) { ctx.moveTo(px, py); first = false; }
+          else { ctx.lineTo(px, py); }
+        }
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // 4.3 Draw Obstacle Point Cloud
       this.pointCloud.forEach(p => {
         const age = now - p.time;
         const alpha = Math.max(0, 1 - age / this.maxPointAgeMs) * 0.75;
-
-        // Transform world coordinates into local ego-centric coordinates
         const dx = p.worldX - robotPos.x;
         const dz = p.worldZ - robotPos.z;
         const localX = dx * cosY - dz * sinY;
@@ -683,13 +1138,67 @@ class UltrasonicMapper {
         if (localForward > 0 && localForward <= this.maxRangeMeters && Math.abs(localX) <= 2.2) {
           const px = cx + localX * meterToPx;
           const py = cy - localForward * meterToPx;
-
           ctx.fillStyle = `rgba(0, 240, 255, ${alpha})`;
           ctx.beginPath();
           ctx.arc(px, py, 2.2, 0, Math.PI * 2);
           ctx.fill();
         }
       });
+
+      // 4.4 Draw Loop Exclusion Zone (if circulating)
+      if (this.circulationDetector.isCirculating && this.circulationDetector.circulationCentroid) {
+        const c = this.circulationDetector.circulationCentroid;
+        const dx = c.x - robotPos.x;
+        const dz = c.z - robotPos.z;
+        const lx = dx * cosY - dz * sinY;
+        const lz = dx * sinY + dz * cosY;
+        const px = cx + lx * meterToPx;
+        const py = cy - lz * meterToPx;
+        const rPx = c.radius * meterToPx;
+
+        ctx.strokeStyle = 'rgba(239, 68, 68, 0.75)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(px, py, rPx, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.fillStyle = 'rgba(239, 68, 68, 0.85)';
+        ctx.font = 'bold 8px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('⚠️ LOOP ZONE', px, py);
+      }
+
+      // 4.5 Draw Frontier Goal Beacon
+      if (this.currentFrontierGoal && !hasFire) {
+        const fg = this.currentFrontierGoal;
+        const dx = fg.x - robotPos.x;
+        const dz = fg.z - robotPos.z;
+        const lx = dx * cosY - dz * sinY;
+        const lz = dx * sinY + dz * cosY;
+        const dist = Math.hypot(lx, lz);
+
+        const dispDist = Math.min(this.maxRangeMeters - 0.2, dist);
+        const angle = Math.atan2(lx, lz);
+        const px = cx + Math.sin(angle) * dispDist * meterToPx;
+        const py = cy - Math.cos(angle) * dispDist * meterToPx;
+
+        const pulse = 4 + Math.sin(this.pulseAnim * 4) * 1.5;
+        ctx.fillStyle = '#f59e0b';
+        ctx.beginPath();
+        ctx.moveTo(px, py - pulse);
+        ctx.lineTo(px + pulse, py);
+        ctx.lineTo(px, py + pulse);
+        ctx.lineTo(px - pulse, py);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = '#fef08a';
+        ctx.font = 'bold 8px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(`📍 ${Math.round(dist * 100)}cm`, px, py - pulse - 3);
+      }
     }
 
     // -------------------------------------------------------------------------
@@ -937,21 +1446,32 @@ class UltrasonicMapper {
     ctx.fillText(`${Math.round(distF)}cm`, 97, 12);
 
     ctx.fillStyle = '#94a3b8';
-    ctx.fillText('R:', 160, 12);
+    ctx.fillText('R:', 140, 12);
     ctx.fillStyle = getDistColor(distR);
-    ctx.fillText(`${Math.round(distR)}cm`, 172, 12);
+    ctx.fillText(`${Math.round(distR)}cm`, 152, 12);
+
+    // Map Coverage Percentage
+    const cov = this.explorationGrid.getCoveragePercentage();
+    ctx.fillStyle = '#38bdf8';
+    ctx.fillText(`MAP:${cov}%`, 198, 12);
 
     // State badge on top right
     ctx.textAlign = 'right';
     if (isSpraying || robotState === 'EXTINGUISHING') {
       ctx.fillStyle = '#ef4444';
       ctx.fillText('EXTINGUISH', width - 6, 12);
+    } else if (this.circulationDetector.isCirculating) {
+      ctx.fillStyle = '#f59e0b';
+      ctx.fillText('⚠️ LOOP ESCAPE', width - 6, 12);
     } else if (avoidance && avoidance.isObstacleAhead) {
       ctx.fillStyle = '#10b981';
       ctx.fillText(avoidance.pathStatus.replace('AVOID ', 'BYPASS '), width - 6, 12);
     } else if (hasFire) {
       ctx.fillStyle = '#f59e0b';
       ctx.fillText('FIRE LOCK', width - 6, 12);
+    } else if (this.currentFrontierGoal) {
+      ctx.fillStyle = '#00f0ff';
+      ctx.fillText('FRONTIER', width - 6, 12);
     } else {
       ctx.fillStyle = '#00f0ff';
       ctx.fillText('PATH: CLEAR', width - 6, 12);

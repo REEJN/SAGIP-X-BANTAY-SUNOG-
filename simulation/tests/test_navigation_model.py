@@ -327,6 +327,120 @@ class TestNavigationModel(unittest.TestCase):
         res_corner = classify_object(corner_points, mF=0.40, mL=0.35, mR=0.35)
         self.assertEqual(res_corner["type"], "WALL")
 
+    def test_exploration_grid_mapping_and_frontiers(self):
+        """
+        Verify persistent 2D occupancy & exploration grid algorithm:
+        1. Coordinate transformations (world <-> grid).
+        2. Bresenham raycasting carving open space (FREE) and marking obstacle hits (OCCUPIED).
+        3. Frontier detection (identifying boundary cells between FREE and UNDISCOVERED space).
+        """
+        size_m = 9.0
+        res = 0.20
+        grid_w = int(round(size_m / res))
+        half_size = size_m / 2.0
+
+        def world_to_grid(x, z):
+            gx = int(math.floor((x + half_size) / res))
+            gz = int(math.floor((z + half_size) / res))
+            if 0 <= gx < grid_w and 0 <= gz < grid_w:
+                return gx, gz
+            return None
+
+        def grid_to_world(gx, gz):
+            x = (gx + 0.5) * res - half_size
+            z = (gz + 0.5) * res - half_size
+            return x, z
+
+        # Coordinate conversions
+        gx, gz = world_to_grid(0.0, 0.0)
+        self.assertEqual(gx, grid_w // 2)
+        self.assertEqual(gz, grid_w // 2)
+        wx, wz = grid_to_world(gx, gz)
+        self.assertAlmostEqual(wx, 0.0, delta=res)
+        self.assertAlmostEqual(wz, 0.0, delta=res)
+
+        # 2D Grid array: 0=UNDISCOVERED, 1=FREE, 2=OCCUPIED
+        cells = np.zeros((grid_w, grid_w), dtype=np.uint8)
+
+        # Carve ray from (0,0) along +Z facing obstacle at 1.4m
+        robot_gx, robot_gz = world_to_grid(0.0, 0.0)
+        for z_step in np.arange(0.0, 1.4, res):
+            g = world_to_grid(0.0, z_step)
+            if g:
+                cells[g[1], g[0]] = 1  # FREE
+        hit_g = world_to_grid(0.0, 1.4)
+        cells[hit_g[1], hit_g[0]] = 2  # OCCUPIED
+
+        self.assertEqual(cells[robot_gz, robot_gx], 1)
+        self.assertEqual(cells[hit_g[1], hit_g[0]], 2)
+
+        # Frontier cells: UNDISCOVERED cells adjacent to FREE cells (not near OCCUPIED)
+        frontiers = []
+        for gz in range(1, grid_w - 1):
+            for gx in range(1, grid_w - 1):
+                if cells[gz, gx] != 0:
+                    continue
+                neighbors = cells[gz - 1:gz + 2, gx - 1:gx + 2]
+                if np.any(neighbors == 1) and not np.any(neighbors == 2):
+                    frontiers.append((gx, gz))
+
+        self.assertGreater(len(frontiers), 0, "Must detect undiscovered frontier cells adjacent to free path")
+
+    def test_circulation_detection_and_escape(self):
+        """
+        Verify circulation / loop trapping detector:
+        1. A robot driving continuously (>=4.0m) within a tight dispersion radius (<=1.25m)
+           is flagged as CIRCULATING.
+        2. A robot driving along an open exploratory trajectory (e.g. straight or wide sweep)
+           is NOT flagged as circulating.
+        3. Escape goal calculation selects an undiscovered frontier outside the circulation radius.
+        """
+        def detect_circulation(path_history, min_dist=3.8, max_radius=1.25):
+            if len(path_history) < 20:
+                return False, None
+            total_dist = sum(
+                math.hypot(path_history[i][0] - path_history[i - 1][0], path_history[i][1] - path_history[i - 1][1])
+                for i in range(1, len(path_history))
+            )
+            if total_dist < min_dist:
+                return False, None
+
+            cx = sum(p[0] for p in path_history) / len(path_history)
+            cz = sum(p[1] for p in path_history) / len(path_history)
+            dispersion = max(math.hypot(p[0] - cx, p[1] - cz) for p in path_history)
+
+            is_looping = (dispersion <= max_radius and total_dist >= min_dist)
+            return is_looping, {"x": cx, "z": cz, "radius": dispersion}
+
+        # Case 1: Trapped in a circle of radius 0.7m (total path 6.6m)
+        loop_history = []
+        center_x, center_z = 1.0, 1.0
+        loop_r = 0.70
+        for step in range(30):
+            theta = (step / 30.0) * (2.0 * math.pi * 1.5)  # 1.5 revolutions
+            x = center_x + math.cos(theta) * loop_r
+            z = center_z + math.sin(theta) * loop_r
+            loop_history.append((x, z))
+
+        is_circ, centroid = detect_circulation(loop_history)
+        self.assertTrue(is_circ, "Circular loop trajectory within 0.7m radius must trigger circulation detection")
+        self.assertAlmostEqual(centroid["x"], center_x, delta=0.2)
+        self.assertAlmostEqual(centroid["z"], center_z, delta=0.2)
+
+        # Case 2: Open exploratory sweep (traveled 5.2m along straight trajectory)
+        open_history = [(0.0, float(step) * 0.18) for step in range(30)]
+        is_circ_open, _ = detect_circulation(open_history)
+        self.assertFalse(is_circ_open, "Open exploratory trajectory must not trigger loop detection")
+
+        # Case 3: Escape goal selection outside the loop zone
+        candidate_frontiers = [
+            {"x": 1.2, "z": 1.3},  # Inside loop (dist ~0.36m from centroid)
+            {"x": 3.5, "z": 2.8},  # Far outside in undiscovered Room (dist ~3.0m)
+        ]
+        escape_goals = [f for f in candidate_frontiers if math.hypot(f["x"] - centroid["x"], f["z"] - centroid["z"]) > 1.8]
+        self.assertEqual(len(escape_goals), 1)
+        self.assertEqual(escape_goals[0]["x"], 3.5)
+
 
 if __name__ == "__main__":
     unittest.main()

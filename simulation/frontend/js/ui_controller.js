@@ -127,6 +127,7 @@ class UIController {
       this.obstacleManager.randomizeLayout();
       this.fireSystem.clearAllFires();
       this.fireSystem.spawnFire(1.5, 1.5, 1.0);
+      if (this.mapper) this.mapper.resetMap();
       this.robotState = 'SEARCHING';
       this.scanPhase = 'SWEEP';
       this.phaseTimer = 0;
@@ -135,6 +136,7 @@ class UIController {
 
     document.getElementById('btn-reset-robot').addEventListener('click', () => {
       this.robot.reset(0, 0, 0);
+      if (this.mapper) this.mapper.resetMap();
       this.robotState = 'SEARCHING';
       this.scanPhase = 'SWEEP';
       this.phaseTimer = 0;
@@ -147,6 +149,7 @@ class UIController {
       layoutSelect.addEventListener('change', (e) => {
         const layout = e.target.value;
         this.sim.setLayout(layout);
+        if (this.mapper) this.mapper.resetMap();
         this.robotState = 'SEARCHING';
         this.scanPhase = 'SWEEP';
         this.phaseTimer = 0;
@@ -814,6 +817,18 @@ class UIController {
       }
 
       const avoidance = this.latestAvoidance;
+      const isLooping = avoidance && avoidance.isCirculating;
+
+      if (isLooping) {
+        this.robotState = 'LOOP_ESCAPE';
+        if (avoidance && avoidance.recommendedPwm) {
+          this.robot.setMotorPwm(avoidance.recommendedPwm.left, avoidance.recommendedPwm.right);
+        } else {
+          this.robot.setMotorPwm(150, 150);
+        }
+        return;
+      }
+
       const classification = (avoidance && avoidance.classification)
         ? avoidance.classification
         : { type: 'CLEAR', flankClearSide: (distR >= distL ? 'RIGHT' : 'LEFT') };
@@ -823,7 +838,15 @@ class UIController {
         if (this.scanPhase === 'SWEEP') {
           this.scanPhase = 'TURN_90_OUT';
           this.phaseTimer = 0;
-          this.scanDirection = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+          let chosenDir = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+          if (avoidance && avoidance.frontierGoal) {
+            const dx = avoidance.frontierGoal.x - this.robot.position.x;
+            const dz = avoidance.frontierGoal.z - this.robot.position.z;
+            const goalBearing = Math.atan2(dx, dz);
+            let diff = this._normalizeAngle(goalBearing - this.robot.yaw);
+            if (Math.abs(diff) > 0.2) chosenDir = (diff >= 0) ? 1 : -1;
+          }
+          this.scanDirection = chosenDir;
           this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
           this.robot.setMotorPwm(0, 0);
         }
@@ -835,21 +858,34 @@ class UIController {
             // Discrete Obstacle (Crate / Barrel): Bypass around obstacle without abandoning sweep lane!
             const rec = avoidance.recommendedPwm;
             this.robot.setMotorPwm(rec.left, rec.right);
+          } else if (avoidance && avoidance.frontierGoal && Math.abs(avoidance.clearAngle) > 0.15) {
+            // Actively steering along predicted path towards undiscovered frontier area!
+            const rec = avoidance.recommendedPwm;
+            this.robot.setMotorPwm(rec.left, rec.right);
           } else {
             // Clear lane sweep forward progress
             if (this.phaseTimer > 5.5) {
               this.scanPhase = 'TURN_90_OUT';
               this.phaseTimer = 0;
-              this.scanDirection = (distR >= distL) ? 1 : -1;
+              let chosenDir = (distR >= distL) ? 1 : -1;
+              if (avoidance && avoidance.frontierGoal) {
+                const dx = avoidance.frontierGoal.x - this.robot.position.x;
+                const dz = avoidance.frontierGoal.z - this.robot.position.z;
+                const goalBearing = Math.atan2(dx, dz);
+                let diff = this._normalizeAngle(goalBearing - this.robot.yaw);
+                if (Math.abs(diff) > 0.2) chosenDir = (diff >= 0) ? 1 : -1;
+              }
+              this.scanDirection = chosenDir;
               this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
               this.robot.setMotorPwm(0, 0);
             } else {
-              // Cruising along sweep corridor
+              // Cruising along sweep corridor towards frontier
+              const targetYawBias = (avoidance && avoidance.frontierGoal) ? avoidance.clearAngle : 0.0;
               let { leftPwm, rightPwm } = this.navModel.step(
                 distF,
                 distL,
                 distR,
-                0.0,
+                targetYawBias,
                 5.0,
                 false,
                 headingRate
