@@ -833,88 +833,102 @@ class UIController {
         ? avoidance.classification
         : { type: 'CLEAR', flankClearSide: (distR >= distL ? 'RIGHT' : 'LEFT') };
 
-      // Wall detection: triggers 90deg lane-turn arc into adjacent sweep lane
+      // Wall & Dead-End Detection:
       // Uses 10-12 inch collision trigger (~0.30m / 30cm) to guarantee sharp corner & wall standoff
       if (classification.type === 'WALL' && (distF < 0.32 || telem.dist_front < 32.0)) {
-        if (this.scanPhase === 'SWEEP') {
-          this.scanPhase = 'TURN_90_OUT';
+        if (this.scanPhase === 'ROOM_EXPLORE' || this.scanPhase === 'SWEEP') {
           this.phaseTimer = 0;
-          let chosenDir = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
-          if (avoidance && avoidance.frontierGoal) {
-            const dx = avoidance.frontierGoal.x - this.robot.position.x;
-            const dz = avoidance.frontierGoal.z - this.robot.position.z;
-            const goalBearing = Math.atan2(dx, dz);
-            let diff = this._normalizeAngle(goalBearing - this.robot.yaw);
-            if (Math.abs(diff) > 0.2) chosenDir = (diff >= 0) ? 1 : -1;
+          const isDeadEnd = avoidance && (avoidance.isDeadEnd || (avoidance.frontierGoal && avoidance.frontierGoal.isCurrentRoomExplored));
+
+          if (isDeadEnd) {
+            // Dead-End or Room Fully Explored: Execute 180deg U-Turn Backtrack to find undiscovered room!
+            this.scanPhase = 'DEADEND_TURN_BACK';
+            const turnSign = (distR >= distL) ? 1 : -1;
+            this.targetYaw = this._normalizeAngle(this.robot.yaw + turnSign * Math.PI); // Exact 180° turnaround
+            this.robot.setMotorPwm(0, 0);
+          } else {
+            // Uncompleted room: contour turn along clearer flank
+            this.scanPhase = 'CONTOUR_TURN';
+            let chosenDir = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
+            if (avoidance && avoidance.frontierGoal) {
+              const dx = avoidance.frontierGoal.x - this.robot.position.x;
+              const dz = avoidance.frontierGoal.z - this.robot.position.z;
+              const goalBearing = Math.atan2(dx, dz);
+              let diff = this._normalizeAngle(goalBearing - this.robot.yaw);
+              if (Math.abs(diff) > 0.2) chosenDir = (diff >= 0) ? 1 : -1;
+            }
+            this.scanDirection = chosenDir;
+            this.targetYaw = this._normalizeAngle(this.robot.yaw + this.scanDirection * (Math.PI / 2));
+            this.robot.setMotorPwm(0, 0);
           }
-          this.scanDirection = chosenDir;
-          this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
-          this.robot.setMotorPwm(0, 0);
         }
       }
 
       switch (this.scanPhase) {
+        case 'ROOM_EXPLORE':
         case 'SWEEP':
           if (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched)) {
             // Priority obstacle & wall avoidance along safe standoff trajectory!
             const rec = avoidance.recommendedPwm;
             this.robot.setMotorPwm(rec.left, rec.right);
           } else if (avoidance && avoidance.frontierGoal && Math.abs(avoidance.clearAngle) > 0.15) {
-            // Actively steering along predicted path towards undiscovered frontier area!
+            // Actively steering along predicted path towards room frontier area!
             const rec = avoidance.recommendedPwm;
             this.robot.setMotorPwm(rec.left, rec.right);
           } else {
-            // Clear lane sweep forward progress
-            if (this.phaseTimer > 5.5) {
-              this.scanPhase = 'TURN_90_OUT';
-              this.phaseTimer = 0;
-              let chosenDir = (distR >= distL) ? 1 : -1;
-              if (avoidance && avoidance.frontierGoal) {
-                const dx = avoidance.frontierGoal.x - this.robot.position.x;
-                const dz = avoidance.frontierGoal.z - this.robot.position.z;
-                const goalBearing = Math.atan2(dx, dz);
-                let diff = this._normalizeAngle(goalBearing - this.robot.yaw);
-                if (Math.abs(diff) > 0.2) chosenDir = (diff >= 0) ? 1 : -1;
-              }
-              this.scanDirection = chosenDir;
-              this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
-              this.robot.setMotorPwm(0, 0);
-            } else {
-              // Cruising along sweep corridor adapting directly to mapped undiscovered frontier
-              let targetYawBias = 0.0;
-              let targetDistM = 5.0;
-              if (avoidance && avoidance.frontierGoal) {
-                const dx = avoidance.frontierGoal.x - this.robot.position.x;
-                const dz = avoidance.frontierGoal.z - this.robot.position.z;
-                const goalBearing = Math.atan2(dx, dz);
-                targetYawBias = this._normalizeAngle(goalBearing - this.robot.yaw);
-                targetDistM = Math.hypot(dx, dz);
-              } else if (avoidance) {
-                targetYawBias = avoidance.clearAngle;
-              }
-
-              let { leftPwm, rightPwm } = this.navModel.step(
-                distF,
-                distL,
-                distR,
-                targetYawBias,
-                targetDistM,
-                false,
-                headingRate
-              );
-              leftPwm = Math.round(leftPwm * 0.45 + 140 * 0.55);
-              rightPwm = Math.round(rightPwm * 0.45 + 140 * 0.55);
-              this.robot.setMotorPwm(leftPwm, rightPwm);
+            // Cruising along room corridor adapting directly to mapped undiscovered frontier
+            let targetYawBias = 0.0;
+            let targetDistM = 5.0;
+            if (avoidance && avoidance.frontierGoal) {
+              const dx = avoidance.frontierGoal.x - this.robot.position.x;
+              const dz = avoidance.frontierGoal.z - this.robot.position.z;
+              const goalBearing = Math.atan2(dx, dz);
+              targetYawBias = this._normalizeAngle(goalBearing - this.robot.yaw);
+              targetDistM = Math.hypot(dx, dz);
+            } else if (avoidance) {
+              targetYawBias = avoidance.clearAngle;
             }
+
+            let { leftPwm, rightPwm } = this.navModel.step(
+              distF,
+              distL,
+              distR,
+              targetYawBias,
+              targetDistM,
+              false,
+              headingRate
+            );
+            leftPwm = Math.round(leftPwm * 0.45 + 140 * 0.55);
+            rightPwm = Math.round(rightPwm * 0.45 + 140 * 0.55);
+            this.robot.setMotorPwm(leftPwm, rightPwm);
           }
           break;
 
-        case 'TURN_90_OUT': {
+        case 'DEADEND_TURN_BACK': {
+          // Intentional 180deg U-Turn: Turn back away from dead-end wall toward exit doorway
           const yawErr = this._normalizeAngle(this.targetYaw - this.robot.yaw);
-          if (Math.abs(yawErr) < this.turnTolerance || this.phaseTimer > 3.0) {
-            this.scanPhase = 'SHIFT_LANE';
+          if (Math.abs(yawErr) < this.turnTolerance || this.phaseTimer > 2.5) {
+            // Turnaround complete! Facing exit corridor / doorway -> transit to new room!
+            this.scanPhase = 'ROOM_TRANSIT';
             this.phaseTimer = 0;
-            this.robot.setMotorPwm(0, 0);
+            this.robot.setMotorPwm(140, 140);
+          } else {
+            const speed = 155;
+            if (yawErr > 0) {
+              this.robot.setMotorPwm(speed, -speed);
+            } else {
+              this.robot.setMotorPwm(-speed, speed);
+            }
+          }
+          break;
+        }
+
+        case 'CONTOUR_TURN': {
+          const yawErr = this._normalizeAngle(this.targetYaw - this.robot.yaw);
+          if (Math.abs(yawErr) < this.turnTolerance || distF > 0.45 || this.phaseTimer > 2.2) {
+            this.scanPhase = 'ROOM_EXPLORE';
+            this.phaseTimer = 0;
+            this.robot.setMotorPwm(140, 140);
           } else {
             const speed = 145;
             if (yawErr > 0) {
@@ -926,43 +940,38 @@ class UIController {
           break;
         }
 
-        case 'SHIFT_LANE':
-          // Drive forward lane width spacing (~0.45m)
-          this.robot.setMotorPwm(135, 135);
-          if (distF < 0.22 || this.phaseTimer >= 0.85) {
-            this.scanPhase = 'TURN_90_IN';
-            this.phaseTimer = 0;
-            this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
-            this.robot.setMotorPwm(0, 0);
-          }
-          break;
+        case 'ROOM_TRANSIT': {
+          // Transiting through doorway into undiscovered room
+          if (avoidance && (avoidance.isObstacleAhead || avoidance.isPathLatched)) {
+            const rec = avoidance.recommendedPwm;
+            this.robot.setMotorPwm(rec.left, rec.right);
+          } else if (avoidance && avoidance.frontierGoal) {
+            const rec = avoidance.recommendedPwm;
+            this.robot.setMotorPwm(rec.left, rec.right);
 
-        case 'TURN_90_IN': {
-          const yawErr2 = this._normalizeAngle(this.targetYaw - this.robot.yaw);
-          if (Math.abs(yawErr2) < this.turnTolerance || this.phaseTimer > 3.0) {
-            this.scanDirection = -this.scanDirection;
-            this.scanPhase = 'SWEEP';
-            this.phaseTimer = 0;
-            this.robot.setMotorPwm(140, 140);
-          } else {
-            const speed = 145;
-            if (yawErr2 > 0) {
-              this.robot.setMotorPwm(speed, -speed);
-            } else {
-              this.robot.setMotorPwm(-speed, speed);
+            // Reached new room with fresh local frontiers!
+            if (!avoidance.frontierGoal.isCurrentRoomExplored && avoidance.frontierGoal.dist < 2.2) {
+              this.scanPhase = 'ROOM_EXPLORE';
+              this.phaseTimer = 0;
             }
+          } else {
+            this.robot.setMotorPwm(140, 140);
+          }
+
+          if (this.phaseTimer > 4.5) {
+            this.scanPhase = 'ROOM_EXPLORE';
+            this.phaseTimer = 0;
           }
           break;
         }
       }
 
-      // Stuck recovery guard if blocked in SWEEP
-      if (this.stuckTimer >= 0.40 && this.scanPhase === 'SWEEP') {
+      // Stuck recovery guard if stalled in any phase
+      if (this.stuckTimer >= 0.40) {
         this.stuckTimer = 0;
-        this.scanPhase = 'TURN_90_OUT';
+        this.scanPhase = 'DEADEND_TURN_BACK';
         this.phaseTimer = 0;
-        this.scanDirection = (distR >= distL) ? 1 : -1;
-        this.targetYaw = this.robot.yaw + this.scanDirection * (Math.PI / 2);
+        this.targetYaw = this._normalizeAngle(this.robot.yaw + Math.PI);
         this.robot.setMotorPwm(0, 0);
       }
     }

@@ -231,22 +231,30 @@ class ExplorationGrid {
 
     let bestGoal = null;
     let maxScore = -999999;
+    let localCount = 0;
 
     clusters.forEach(c => {
       const dist = robotPos ? Math.hypot(c.x - robotPos.x, c.z - robotPos.z) : 1.0;
       const infoGain = c.points.length;
+      const hasLoS = robotPos ? this.hasLineOfSight(robotPos.x, robotPos.z, c.x, c.z) : true;
+      const isLocal = (dist <= 2.5 && hasLoS);
+      if (isLocal) localCount++;
 
       let score = infoGain * 14.0 - dist * 6.5;
 
       // Line-of-sight check: if frontier is directly occluded behind a solid wall, heavily penalize it
       // so robot routes toward open doorways instead of driving directly into walls!
       if (robotPos) {
-        const hasLoS = this.hasLineOfSight(robotPos.x, robotPos.z, c.x, c.z);
         if (!hasLoS) {
           score -= 900.0; // Blocked behind a wall: cannot drive straight into it
         } else {
           score += 250.0; // Clear open corridor directly to frontier
         }
+      }
+
+      // Prioritize local room frontiers until the current room is fully mapped
+      if (isLocal) {
+        score += 280.0;
       }
 
       // Penalize frontiers inside or near the loop exclusion zone
@@ -261,9 +269,20 @@ class ExplorationGrid {
 
       if (score > maxScore) {
         maxScore = score;
-        bestGoal = { x: c.x, z: c.z, clusterSize: infoGain, dist };
+        bestGoal = {
+          x: c.x,
+          z: c.z,
+          clusterSize: infoGain,
+          dist,
+          hasLoS,
+          isLocal
+        };
       }
     });
+
+    if (bestGoal) {
+      bestGoal.isCurrentRoomExplored = (localCount === 0);
+    }
 
     return bestGoal;
   }
@@ -826,8 +845,40 @@ class UltrasonicMapper {
       }
     }
 
+    // Dead-end & Room Boundary Block Detection:
+    // Occurs when forward path is blocked by a wall AND flanks are constrained (<0.45m),
+    // OR when the local room is fully mapped and forward progress hits a room perimeter wall.
+    const isRoomExplored = Boolean(this.currentFrontierGoal && this.currentFrontierGoal.isCurrentRoomExplored);
+    const isDeadEnd = (classification.type === 'WALL' && minForwardDist < collisionTriggerM + 0.08 && (minLeftFlankDist < 0.45 || minRightFlankDist < 0.45))
+                   || (isRoomExplored && classification.type === 'WALL' && minForwardDist < collisionTriggerM + 0.10);
+
     if (!this.latchedWorldPath) {
-      if (classification.type === 'WALL' && minForwardDist < collisionTriggerM + 0.05) {
+      if (isDeadEnd && robotPos) {
+        // Dead-End or Room Fully Explored: Execute 180deg U-Turn Backtrack toward doorway!
+        const turnSign = (minRightFlankDist >= minLeftFlankDist) ? 1 : -1;
+        const turnAngle = turnSign * Math.PI; // Full 180° turnaround!
+        localPath.push({ x: 0, y: 0 });
+        worldPath.push({ x: robotPos.x, z: robotPos.z });
+
+        const numWp = 10;
+        for (let i = 1; i <= numWp; i++) {
+          const frac = i / numWp;
+          const a = turnAngle * frac;
+          const s = frac * 0.95;
+          // Smooth U-turn arc swinging wide away from the wall
+          const lx = Math.sin(a) * (0.20 + frac * 0.35);
+          const lz = -Math.abs(Math.sin(a / 2)) * s; // Backing away from the wall into open space
+          localPath.push({ x: lx, y: lz });
+          worldPath.push({
+            x: robotPos.x + lx * cosY + lz * sinY,
+            z: robotPos.z - lx * sinY + lz * cosY
+          });
+        }
+        this.latchedWorldPath = worldPath;
+        this.latchedWaypointIdx = 1;
+        this.latchedTimestamp = now;
+        isPathLatched = true;
+      } else if (classification.type === 'WALL' && minForwardDist < collisionTriggerM + 0.05) {
         // Wall Encountered: Generate 90deg lane-turn arc into adjacent sweep lane
         let turnSign = (classification.flankClearSide === 'RIGHT') ? 1 : -1;
         if (Math.abs(desiredGoalAngle) > 0.25) {
@@ -1047,20 +1098,26 @@ class UltrasonicMapper {
     }
 
     const angleDeg = Math.round((finalAngle * 180) / Math.PI);
-    let pathStatus = 'LANE SWEEP';
+    let pathStatus = 'ROOM EXPLORE';
     if (this.circulationDetector.isCirculating) {
       pathStatus = 'LOOP ESCAPE (AVOID CORRIDOR)';
+    } else if (isDeadEnd) {
+      pathStatus = 'DEAD-END (TURN BACK TO UNDISCOVERED ROOM)';
     } else if (classification.type === 'WALL' && minForwardDist < 0.85) {
-      pathStatus = `WALL (ZIGZAG 90° ${classification.flankClearSide})`;
+      pathStatus = `WALL (CONTOUR ${classification.flankClearSide})`;
     } else if (classification.type === 'OBSTACLE' && (isPathLatched || isObstacleAhead)) {
       pathStatus = `OBSTACLE (BYPASS ${classification.flankClearSide})`;
+    } else if (goalPos && goalPos.isCurrentRoomExplored) {
+      pathStatus = 'TRANSIT TO NEW ROOM (DOORWAY)';
     } else if (goalPos) {
-      pathStatus = 'FRONTIER (EXPLORE NEW AREA)';
+      pathStatus = 'FRONTIER (EXPLORE ROOM)';
     }
 
     return {
       isObstacleAhead,
       isPathLatched,
+      isDeadEnd,
+      isCurrentRoomExplored: isRoomExplored,
       classification,
       clearAngle: pathYaw, // Heading error to the lookahead waypoint
       pathYaw: pathYaw,

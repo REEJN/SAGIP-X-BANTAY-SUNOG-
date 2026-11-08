@@ -672,6 +672,38 @@ def generate_synthetic_dataset(
         inputs_list.append(norm_feat)
         actions_list.append([lp, rp])
 
+    # 8. Augment with 180° Dead-End Turnaround & Doorway Backtracking Transitions (8,000 samples)
+    # When front is blocked by a wall and goal is behind toward exit doorway (relative yaw ~ ±180°),
+    # the neural model executes a decisive in-place turnaround away from the wall.
+    print("[DATASET] Augmenting dataset with 180° dead-end turnaround & doorway backtracking transitions...")
+    for _ in range(8000):
+        df_wall = random.uniform(0.15, 0.36)
+        dl_flank = random.uniform(0.18, 1.8)
+        dr_flank = random.uniform(0.18, 1.8)
+        # Goal is behind (180deg U-turn / doorway exit)
+        turn_sign = 1.0 if (dr_flank >= dl_flank or random.random() < 0.5) else -1.0
+        backtrack_yaw = turn_sign * random.uniform(2.1, math.pi)
+        doorway_dist = random.uniform(1.2, 5.0)
+        heading = random.uniform(-0.3, 0.3)
+
+        norm_feat = normalize_inputs(
+            dist_front=df_wall,
+            dist_left=dl_flank,
+            dist_right=dr_flank,
+            target_rel_yaw=backtrack_yaw,
+            target_distance=doorway_dist,
+            has_fire_target=0.0,
+            heading_rate=heading
+        )
+
+        # Expert Action: Decisive in-place pivot away from dead-end wall
+        pivot_speed = 160.0
+        lp = turn_sign * pivot_speed
+        rp = -turn_sign * pivot_speed
+
+        inputs_list.append(norm_feat)
+        actions_list.append([lp, rp])
+
     X = np.array(inputs_list, dtype=np.float32)
     Y = np.array(actions_list, dtype=np.float32)
 

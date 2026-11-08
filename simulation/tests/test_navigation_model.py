@@ -590,6 +590,96 @@ class TestNavigationModel(unittest.TestCase):
         self.assertAlmostEqual(new_dist, min_standoff, places=3,
                                msg="Inflated waypoint must maintain >= 0.28m standoff from obstacle vertex")
 
+    def test_deadend_turnaround_and_inter_room_routing(self):
+        """
+        Verify Dead-End Detection, 180° Backtrack U-Turn, and Local vs Inter-Room Frontier Classification:
+        1. Distinguish local room frontiers (dist <= 2.5m, LOS clear) from doorway/inter-room frontiers.
+        2. Detect room completion (localFrontierCount == 0 -> isCurrentRoomExplored = True).
+        3. Detect dead-end state (front clearance < 0.38m with restricted flanks < 0.45m).
+        4. Generate decisive 180° U-turn escape heading pointing back toward undiscovered room doorway.
+        5. Verify TinyML policy in-place pivot response for dead-end turnaround (reverse/differential spin).
+        """
+        def normalize_angle(theta):
+            while theta > math.pi:
+                theta -= 2.0 * math.pi
+            while theta < -math.pi:
+                theta += 2.0 * math.pi
+            return theta
+
+        # 1. Local vs Inter-Room Frontier Classification
+        # Suppose robot is at (0, 0)
+        robot_x, robot_z = 0.0, 0.0
+
+        frontiers = [
+            {"x": 1.2, "z": 1.5, "los": True, "size": 8},   # dist = 1.92m, LOS -> Local
+            {"x": 4.5, "z": 0.5, "los": False, "size": 15}, # dist = 4.53m > 2.5m -> Inter-Room
+            {"x": 1.0, "z": 0.8, "los": False, "size": 5},  # dist = 1.28m but occluded -> Inter-Room
+        ]
+
+        local_frontiers = []
+        inter_room_frontiers = []
+
+        for f in frontiers:
+            dist = math.hypot(f["x"] - robot_x, f["z"] - robot_z)
+            is_local = (dist <= 2.5 and f["los"])
+            if is_local:
+                local_frontiers.append(f)
+            else:
+                inter_room_frontiers.append(f)
+
+        self.assertEqual(len(local_frontiers), 1, "Expected 1 local room frontier")
+        self.assertEqual(len(inter_room_frontiers), 2, "Expected 2 inter-room / doorway frontiers")
+
+        # Room exploration status when local frontiers exist
+        is_room_explored = (len(local_frontiers) == 0)
+        self.assertFalse(is_room_explored, "Room with remaining local frontiers must not be marked explored")
+
+        # Once all local frontiers in current room are cleared
+        local_frontiers.clear()
+        is_room_explored = (len(local_frontiers) == 0)
+        self.assertTrue(is_room_explored, "Room with 0 local frontiers must be marked explored")
+
+        # 2. Dead-End & Wall Boundary Detection
+        def check_dead_end(front_clear, left_clear, right_clear, room_cleared):
+            front_blocked = (front_clear < 0.38)
+            sides_restricted = (left_clear < 0.45 and right_clear < 0.45)
+            return (front_blocked and (sides_restricted or left_clear < 0.38 or right_clear < 0.38)) or (front_blocked and room_cleared)
+
+        # Case A: Open space ahead
+        self.assertFalse(check_dead_end(1.5, 0.8, 0.8, False))
+
+        # Case B: Corner / Dead-end wall ahead (front 0.28m, left 0.35m, right 0.40m)
+        self.assertTrue(check_dead_end(0.28, 0.35, 0.40, False), "Constrained corner must trigger dead-end")
+
+        # Case C: Room perimeter wall reached after room is fully explored
+        self.assertTrue(check_dead_end(0.35, 1.2, 1.0, True), "Perimeter wall in cleared room must trigger dead-end backtrack")
+
+        # 3. Decisive 180° Backtrack U-Turn Heading
+        robot_yaw = 0.5  # Heading ~28.6 degrees
+        escape_bearing = normalize_angle(robot_yaw + math.pi)
+        # Difference between robot_yaw and escape_bearing must be exactly 180 degrees (pi rad)
+        yaw_diff = abs(normalize_angle(escape_bearing - robot_yaw))
+        self.assertAlmostEqual(yaw_diff, math.pi, places=5, msg="Escape bearing must be exactly 180° reversed")
+
+        # 4. TinyML Policy Response for Dead-End Turnaround
+        # When target is directly behind (target_rel_yaw ≈ ±pi) and front wall is within 0.32m,
+        # TinyML policy must execute an aggressive in-place pivot / differential turn, not push forward into wall.
+        if self.numpy_runner is not None:
+            l_u_turn, r_u_turn = self.numpy_runner.step(
+                dist_front_m=0.30,
+                dist_left_m=0.40,
+                dist_right_m=1.80,
+                target_rel_yaw_rad=-2.8,  # Target is almost 180° behind to left
+                target_dist_m=3.0,
+                has_fire=False,
+                heading_rate_rads=0.0
+            )
+            # Must steer left towards escape target (right_pwm > left_pwm)
+            self.assertGreater(r_u_turn, l_u_turn, "Policy must pivot left toward reverse target")
+            # Should have substantial turning differential to turn around in-place
+            turn_diff = abs(r_u_turn - l_u_turn)
+            self.assertGreater(turn_diff, 100.0, "Must provide aggressive turning differential for 180° turnaround")
+
 
 if __name__ == "__main__":
     unittest.main()
