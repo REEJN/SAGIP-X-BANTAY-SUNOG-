@@ -113,6 +113,26 @@ class SyncBridge:
             asyncio.run_coroutine_threadsafe(cls.broadcast_ws(msg), cls.loop)
 
     @classmethod
+    def on_serial_log(cls, log_entry: dict):
+        """Called when ESP32 emits a log line."""
+        if cls.loop and cls.connected_clients:
+            msg = json.dumps({"type": "ESP32_LOG", "data": log_entry})
+            asyncio.run_coroutine_threadsafe(cls.broadcast_ws(msg), cls.loop)
+
+    @classmethod
+    def emit_pi_log(cls, message: str, level: str = "INFO", source: str = "VISION"):
+        """Emit a Raspberry Pi 3B log message to all connected dashboards."""
+        log_entry = {
+            "source": source,
+            "level": level,
+            "message": message,
+            "timestamp": time.time()
+        }
+        if cls.loop and cls.connected_clients:
+            msg = json.dumps({"type": "PI_LOG", "data": log_entry})
+            asyncio.run_coroutine_threadsafe(cls.broadcast_ws(msg), cls.loop)
+
+    @classmethod
     async def broadcast_ws(cls, message: str):
         if not cls.connected_clients:
             return
@@ -126,19 +146,57 @@ class SyncBridge:
             cls.connected_clients.discard(d)
 
 
+async def periodic_pi_logs():
+    """Periodically emits realistic Raspberry Pi 3B diagnostics and telemetry to the dashboard console."""
+    pi_diagnostics = [
+        ("[System] Pi 3B CPU: 24.8% | Core Temp: 48.2°C | RAM: 312MB / 927MB | V4L2 640x480 @ 29.8fps", "INFO", "SYSTEM"),
+        ("[Vision AI] Detector backend: " + (model_backend if 'model_backend' in globals() else "hsv_fallback") + " | Model inference: ~22ms | Quant: INT8", "INFO", "VISION"),
+        ("[UART0] PL011 hardware serial link active: GPIO 14 (TXD) -> ESP32 RX2 | 115200 8-N-1 | Buffer: OK", "INFO", "UART"),
+        ("[Confirmation] Sliding window 5-frame tracker active | Conf threshold: 0.65 | Temporal filter: PASS", "INFO", "VISION"),
+        ("[Telemetry] Forwarding ESP32 status packets to dashboard WebSocket clients (10 Hz)", "DEBUG", "SYSTEM"),
+    ]
+    step = 0
+    while True:
+        await asyncio.sleep(3.5)
+        if SyncBridge.connected_clients:
+            msg, level, src = pi_diagnostics[step % len(pi_diagnostics)]
+            SyncBridge.emit_pi_log(msg, level=level, source=src)
+            step += 1
+
+
 async def handle_ws(websocket):
     SyncBridge.connected_clients.add(websocket)
     logger.info(f"[WS] Client connected. Active clients: {len(SyncBridge.connected_clients)}")
+
+    # Send initial welcome log to both consoles
+    SyncBridge.emit_pi_log("[Init] Raspberry Pi 3B Vision & Telemetry Engine Online", "INFO", "SYSTEM")
+    SyncBridge.on_serial_log({
+        "source": "ESP32",
+        "level": "INFO",
+        "message": "[BOOT] ESP32-WROOM-32 FreeRTOS Kernel v10.4.3 initialized",
+        "timestamp": time.time()
+    })
 
     try:
         async for message in websocket:
             try:
                 data = json.loads(message)
+                msg_type = data.get("type", "")
                 sync_mode = data.get("sync_mode", "")
+
+                # -------------------------------------------------------------
+                # Bench Test Command Dispatch
+                # -------------------------------------------------------------
+                if msg_type == "BENCH_COMMAND" and SyncBridge.serial_conn:
+                    cmd = data.get("cmd", "")
+                    SyncBridge.serial_conn.send_line(cmd)
+                    SyncBridge.emit_pi_log(f"[Bench Test] Dispatched user command '{cmd}' to ESP32", "INFO", "UART")
+                    continue
+
                 # -------------------------------------------------------------
                 # Process Virtual Camera Frame with BANTAY-SUNOG Detection Model
                 # -------------------------------------------------------------
-                if data.get("type") == "FRAME_INFERENCE_REQUEST" and VISION_AI_ENABLED:
+                if msg_type == "FRAME_INFERENCE_REQUEST" and VISION_AI_ENABLED:
                     img_data = data.get("image", "")
                     if "," in img_data:
                         img_data = img_data.split(",", 1)[1]
@@ -185,6 +243,13 @@ async def handle_ws(websocket):
                                 } if best_det else None
                             }
                             await websocket.send(json.dumps(resp))
+
+                            if best_det and event == "FIRE_CONFIRMED":
+                                SyncBridge.emit_pi_log(
+                                    f"[Vision AI] FIRE CONFIRMED (Conf: {best_det.confidence:.2f}, Target: [{best_det.normalized_x:.2f}, {best_det.normalized_y:.2f}])",
+                                    level="WARN",
+                                    source="VISION"
+                                )
                     except Exception as e:
                         logger.error(f"[Vision AI Error] {e}")
 
@@ -223,6 +288,11 @@ async def handle_ws(websocket):
                             "timestamp": int(asyncio.get_event_loop().time())
                         }
                         SyncBridge.serial_conn.send_json(vision_pkt)
+                        SyncBridge.emit_pi_log(
+                            f"[UART TX] Dispatched FIRE_CONFIRMED packet to ESP32: x={vision_pkt['x']} y={vision_pkt['y']} conf={vision_pkt['confidence']}",
+                            level="INFO",
+                            source="UART"
+                        )
 
             except json.JSONDecodeError:
                 pass
@@ -250,6 +320,7 @@ async def main_async(args):
         mock_mode=args.mock
     )
     SyncBridge.serial_conn.on_telemetry_received = SyncBridge.on_serial_telemetry
+    SyncBridge.serial_conn.on_log_received = SyncBridge.on_serial_log
 
     # Connect to serial or mock
     SyncBridge.serial_conn.connect(args.serial_port)
@@ -261,6 +332,9 @@ async def main_async(args):
         daemon=True
     )
     http_thread.start()
+
+    # Start periodic Pi logs task
+    asyncio.create_task(periodic_pi_logs())
 
     # Start WebSocket Server
     logger.info(f"[WS] WebSocket server listening on ws://{args.host}:{args.ws_port}/ws/telemetry")

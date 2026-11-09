@@ -31,6 +31,7 @@ class SerialConnector:
         self.read_thread: Optional[threading.Thread] = None
 
         self.on_telemetry_received: Optional[Callable[[dict], None]] = None
+        self.on_log_received: Optional[Callable[[dict], None]] = None
         self.last_telemetry: dict = {}
 
     @staticmethod
@@ -78,12 +79,26 @@ class SerialConnector:
         """Send raw string line with newline delimiter to ESP32."""
         if self.mock_mode or not self.ser:
             logger.debug(f"[Serial MOCK TX] -> {data_str}")
+            if self.on_log_received:
+                self.on_log_received({
+                    "source": "ESP32",
+                    "level": "INFO",
+                    "message": f"[UART TX] Dispatched command: {data_str.strip()}",
+                    "timestamp": time.time()
+                })
             return True
 
         try:
             payload = (data_str.strip() + "\n").encode("utf-8")
             self.ser.write(payload)
             self.ser.flush()
+            if self.on_log_received:
+                self.on_log_received({
+                    "source": "ESP32",
+                    "level": "INFO",
+                    "message": f"[UART TX] -> {data_str.strip()}",
+                    "timestamp": time.time()
+                })
             return True
         except Exception as e:
             logger.error(f"[Serial TX Error] {e}")
@@ -94,7 +109,6 @@ class SerialConnector:
         return self.send_line(json.dumps(payload))
 
     def _read_worker(self):
-        buffer = ""
         while self.running and self.ser and self.ser.is_open:
             try:
                 line = self.ser.readline().decode("utf-8", errors="replace").strip()
@@ -108,17 +122,58 @@ class SerialConnector:
                         self.last_telemetry = data
                         if self.on_telemetry_received:
                             self.on_telemetry_received(data)
+                        if self.on_log_received:
+                            self.on_log_received({
+                                "source": "ESP32",
+                                "level": "DEBUG",
+                                "message": f"[TELEMETRY RX] {line}",
+                                "timestamp": time.time()
+                            })
                     except json.JSONDecodeError:
                         logger.debug(f"[Serial Non-JSON] {line}")
+                        if self.on_log_received:
+                            self.on_log_received({
+                                "source": "ESP32",
+                                "level": "WARN",
+                                "message": f"[CORRUPT] {line}",
+                                "timestamp": time.time()
+                            })
                 else:
                     logger.debug(f"[ESP32 Debug] {line}")
+                    if self.on_log_received:
+                        level = "WARN" if "ERR" in line or "FAIL" in line else "INFO"
+                        self.on_log_received({
+                            "source": "ESP32",
+                            "level": level,
+                            "message": line,
+                            "timestamp": time.time()
+                        })
             except Exception as e:
                 logger.error(f"[Serial Read Error] {e}")
+                if self.on_log_received:
+                    self.on_log_received({
+                        "source": "ESP32",
+                        "level": "ERROR",
+                        "message": f"[SERIAL ERROR] {e}",
+                        "timestamp": time.time()
+                    })
                 time.sleep(0.5)
 
     def _mock_worker(self):
-        """Simulates periodic ESP32 telemetry in mock mode."""
+        """Simulates periodic ESP32 telemetry & diagnostic logs in mock mode."""
         uptime = 0
+        step = 0
+        mock_log_templates = [
+            "[FSM] State: SEARCHING | Obstacle clearances: F:120cm L:95cm R:88cm",
+            "[MOTORS] PWM output updated: PWMA:140 PWMB:140 | STBY: HIGH",
+            "[SENSORS] HC-SR04 ping active (3-beam sweep: 40Hz, 10us TRIG pulse)",
+            "[UART] RX Heartbeat OK from Pi (/dev/ttyAMA0 @ 115200 8-N-1)",
+            "[TURRET] Pitch servo holding level at 90.0° (no flame deflection)",
+            "[SOLENOID] Valve safety interlock ENGAGED | State: OFF",
+            "[TINYML] Local inference cycle: 0.12ms (ESP32 240MHz Xtensa Dual-Core)",
+            "[OPTICAL] LM393 IR Flame Sensor digital read: HIGH (Clear, no IR trigger)"
+        ]
+
         while self.running:
             mock_data = {
                 "robot_state": "SEARCHING",
@@ -136,5 +191,18 @@ class SerialConnector:
             self.last_telemetry = mock_data
             if self.on_telemetry_received:
                 self.on_telemetry_received(mock_data)
+
+            # Emit periodic mock log for dashboard console terminal
+            if self.on_log_received and step % 2 == 0:
+                log_idx = (step // 2) % len(mock_log_templates)
+                self.on_log_received({
+                    "source": "ESP32",
+                    "level": "INFO",
+                    "message": mock_log_templates[log_idx],
+                    "timestamp": time.time()
+                })
+
             uptime += 500
+            step += 1
             time.sleep(0.5)
+

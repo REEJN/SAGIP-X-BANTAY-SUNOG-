@@ -52,12 +52,17 @@ class UIController {
     this.recentBboxAreas = [];
     this.mapper = null;
 
-    // Teleop key state
-    this.activeKeys = new Set();
-
-    // WebSocket link to sync_server.py
-    this.socket = null;
-    this.wsConnected = false;
+    // Dashboard & Page Navigation
+    this.activePage = 'dashboard';
+    this.piLogs = [];
+    this.espLogs = [];
+    this.maxLogs = 300;
+    this.missionStartTime = Date.now();
+    this.firesExtinguishedCount = 0;
+    this.telemetryHistory = [];
+    this.activeChartChannel = 'sensors';
+    this.chartTimer = 0;
+    this.minimapTimer = 0;
 
     this.bindDomElements();
     this.bindKeyboard();
@@ -65,6 +70,94 @@ class UIController {
   }
 
   bindDomElements() {
+    // Navigation Tabs (Main Dashboard vs 3D Simulation Sub-Page)
+    document.querySelectorAll('.nav-tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        const page = tab.dataset.page;
+        this.switchPage(page);
+      });
+    });
+
+    // Global E-Stop Button
+    document.getElementById('btn-global-estop')?.addEventListener('click', () => {
+      this.emergencyStop();
+    });
+
+    // Terminal Pi Controls
+    document.getElementById('btn-clear-pi')?.addEventListener('click', () => {
+      this.piLogs = [];
+      this.renderPiLogs();
+    });
+
+    document.getElementById('btn-copy-pi')?.addEventListener('click', () => {
+      const text = this.piLogs.map(e => `[${new Date(e.timestamp * 1000).toLocaleTimeString()}] [${e.source}] ${e.message}`).join('\n');
+      navigator.clipboard.writeText(text).then(() => alert('Pi console logs copied to clipboard!'));
+    });
+
+    document.getElementById('sel-filter-pi')?.addEventListener('change', () => {
+      this.renderPiLogs();
+    });
+
+    // Terminal ESP32 Controls
+    document.getElementById('btn-clear-esp')?.addEventListener('click', () => {
+      this.espLogs = [];
+      this.renderEspLogs();
+    });
+
+    document.getElementById('btn-copy-esp')?.addEventListener('click', () => {
+      const text = this.espLogs.map(e => `[${new Date(e.timestamp * 1000).toLocaleTimeString()}] ${e.message}`).join('\n');
+      navigator.clipboard.writeText(text).then(() => alert('ESP32 console logs copied to clipboard!'));
+    });
+
+    document.getElementById('inp-filter-esp')?.addEventListener('input', () => {
+      this.renderEspLogs();
+    });
+
+    // Chart Channel Pills
+    document.querySelectorAll('.chart-pill').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        document.querySelectorAll('.chart-pill').forEach(p => p.classList.remove('active'));
+        pill.classList.add('active');
+        this.activeChartChannel = pill.dataset.channel;
+        this.renderTelemetryChart();
+      });
+    });
+
+    // Bench Test Buttons
+    document.querySelectorAll('.bench-btn[data-cmd]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd;
+        this.dispatchBenchCommand(cmd);
+      });
+    });
+
+    // Dashboard Policy Selectors
+    const btnDashNeural = document.getElementById('btn-dash-policy-neural');
+    const btnDashSil = document.getElementById('btn-dash-policy-sil');
+    if (btnDashNeural && btnDashSil) {
+      btnDashNeural.addEventListener('click', () => {
+        this.syncMode = 'neural';
+        btnDashNeural.style.background = 'var(--accent-cyan)';
+        btnDashNeural.style.color = '#000';
+        btnDashSil.style.background = 'rgba(255,255,255,0.05)';
+        btnDashSil.style.color = '#fff';
+        document.querySelectorAll('.mode-radio').forEach(r => {
+          r.classList.toggle('selected', r.dataset.mode === 'neural');
+        });
+      });
+
+      btnDashSil.addEventListener('click', () => {
+        this.syncMode = 'sil';
+        btnDashSil.style.background = 'var(--accent-cyan)';
+        btnDashSil.style.color = '#000';
+        btnDashNeural.style.background = 'rgba(255,255,255,0.05)';
+        btnDashNeural.style.color = '#fff';
+        document.querySelectorAll('.mode-radio').forEach(r => {
+          r.classList.toggle('selected', r.dataset.mode === 'sil');
+        });
+      });
+    }
+
     // View Buttons
     document.querySelectorAll('.view-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -448,10 +541,15 @@ class UIController {
     }
   }
 
-  /**
-   * Handle telemetry from physical ESP32 or external controller.
-   */
   handleIncomingTelemetry(data) {
+    if (data.type === 'PI_LOG' && data.data) {
+      this.appendPiLog(data.data);
+      return;
+    }
+    if (data.type === 'ESP32_LOG' && data.data) {
+      this.appendEspLog(data.data);
+      return;
+    }
     if (data.type === 'INFERENCE_RESULT') {
       this.handleInferenceResult(data);
       return;
@@ -593,6 +691,7 @@ class UIController {
     // 3. Visualization & Telemetry Broadcast
     this.computePredictionPath(telem);
     this.updateHud(telem);
+    this.updateDashboardHud(dt, telem);
     this.broadcastTelemetry(telem);
   }
 
@@ -1679,4 +1778,518 @@ class UIController {
       }
     }
   }
+
+  // =========================================================================
+  // MAIN OPERATIONS DASHBOARD LOGIC & HARDWARE TERMINALS
+  // =========================================================================
+
+  switchPage(page) {
+    this.activePage = page;
+    document.querySelectorAll('.nav-tab').forEach((t) => {
+      t.classList.toggle('active', t.dataset.page === page);
+    });
+
+    const pageDash = document.getElementById('page-dashboard');
+    const pageSim = document.getElementById('page-simulation');
+
+    if (pageDash && pageSim) {
+      if (page === 'dashboard') {
+        pageDash.classList.add('active');
+        pageSim.classList.remove('active');
+      } else {
+        pageDash.classList.remove('active');
+        pageSim.classList.add('active');
+      }
+    }
+  }
+
+  emergencyStop() {
+    this.robot.setMotorPwm(0, 0);
+    this.robot.solenoidActive = false;
+    this.robotState = 'ESTOP';
+    this.dispatchBenchCommand('x');
+    this.appendEspLog({
+      source: 'ESP32',
+      level: 'ERROR',
+      message: '[SAFETY] EMERGENCY STOP ACTIVATED! Motors halted, solenoid locked.',
+      timestamp: Date.now() / 1000
+    });
+  }
+
+  dispatchBenchCommand(cmd) {
+    if (this.wsConnected && this.socket && this.socket.readyState === WebSocket.OPEN) {
+      this.socket.send(JSON.stringify({
+        type: 'BENCH_COMMAND',
+        cmd: cmd
+      }));
+    }
+
+    // Direct local simulation responses
+    if (cmd === 'w') {
+      this.robot.setMotorPwm(150, 150);
+      setTimeout(() => { if (this.robotState !== 'SEARCHING') this.robot.setMotorPwm(0, 0); }, 1000);
+    } else if (cmd === 's') {
+      this.robot.setMotorPwm(-150, -150);
+      setTimeout(() => { if (this.robotState !== 'SEARCHING') this.robot.setMotorPwm(0, 0); }, 1000);
+    } else if (cmd === 'a') {
+      this.robot.setMotorPwm(-140, 140);
+      setTimeout(() => { if (this.robotState !== 'SEARCHING') this.robot.setMotorPwm(0, 0); }, 800);
+    } else if (cmd === 'd') {
+      this.robot.setMotorPwm(140, -140);
+      setTimeout(() => { if (this.robotState !== 'SEARCHING') this.robot.setMotorPwm(0, 0); }, 800);
+    } else if (cmd === 'x') {
+      this.robot.setMotorPwm(0, 0);
+      this.robot.solenoidActive = false;
+    } else if (cmd === 'f') {
+      this.robot.solenoidActive = true;
+      setTimeout(() => { this.robot.solenoidActive = false; }, 1000);
+    } else if (cmd === 'sweep') {
+      this.robot.setTiltAngle(45);
+      setTimeout(() => this.robot.setTiltAngle(135), 400);
+      setTimeout(() => this.robot.setTiltAngle(90), 800);
+    } else if (cmd === 'sim') {
+      const fwd = new THREE.Vector3(Math.sin(this.robot.yaw), 0, Math.cos(this.robot.yaw));
+      const pos = this.robot.position.clone().add(fwd.multiplyScalar(1.5));
+      this.fireSystem.addFire(pos.x, pos.z, 0.4);
+    } else if (cmd === 'clear') {
+      this.fireSystem.clearAllFires();
+    }
+  }
+
+  appendPiLog(logEntry) {
+    this.piLogs.push(logEntry);
+    if (this.piLogs.length > this.maxLogs) this.piLogs.shift();
+
+    // Parse system stats if present
+    const msg = logEntry.message || '';
+    if (msg.includes('Pi 3B CPU:')) {
+      const mCpu = msg.match(/CPU:\s*([\d\.]+%)/);
+      const mTemp = msg.match(/Temp:\s*([\d\.]+°C)/);
+      const mRam = msg.match(/RAM:\s*([^\s\|]+)/);
+      const mFps = msg.match(/@\s*([\d\.]+)fps/);
+      if (mCpu) document.getElementById('pi-stat-cpu').textContent = mCpu[1];
+      if (mTemp) document.getElementById('pi-stat-temp').textContent = mTemp[1];
+      if (mRam) document.getElementById('pi-stat-ram').textContent = mRam[1];
+      if (mFps) document.getElementById('pi-stat-fps').textContent = mFps[1];
+    }
+
+    this.renderPiLogs();
+  }
+
+  appendEspLog(logEntry) {
+    this.espLogs.push(logEntry);
+    if (this.espLogs.length > this.maxLogs) this.espLogs.shift();
+
+    const msg = logEntry.message || '';
+    if (msg.includes('uptime') || msg.includes('Uptime')) {
+      const mUp = msg.match(/uptime[:\s]*(\d+)/i);
+      if (mUp) {
+        const sec = Math.floor(parseInt(mUp[1]) / 1000);
+        const mm = String(Math.floor(sec / 60)).padStart(2, '0');
+        const ss = String(sec % 60).padStart(2, '0');
+        const hh = String(Math.floor(sec / 3600)).padStart(2, '0');
+        const upEl = document.getElementById('esp-stat-uptime');
+        if (upEl) upEl.textContent = `${hh}:${mm}:${ss}`;
+      }
+    }
+
+    this.renderEspLogs();
+  }
+
+  renderPiLogs() {
+    const term = document.getElementById('terminal-pi');
+    if (!term) return;
+
+    const filter = document.getElementById('sel-filter-pi')?.value || 'ALL';
+    const autoscroll = document.getElementById('chk-autoscroll-pi')?.checked ?? true;
+
+    const filtered = this.piLogs.filter((e) => {
+      if (filter === 'ALL') return true;
+      if (filter === 'WARN') return e.level === 'WARN' || e.level === 'ERROR';
+      return e.source === filter;
+    });
+
+    term.innerHTML = filtered.map((e) => {
+      const t = e.timestamp ? new Date(e.timestamp * 1000) : new Date();
+      const timeStr = t.toLocaleTimeString();
+      const badgeCls = (e.source || 'system').toLowerCase();
+      const msgCls = (e.level || 'info').toLowerCase();
+      return `<div class="log-entry">
+        <span class="log-time">[${timeStr}]</span>
+        <span class="log-badge ${badgeCls}">[${e.source || 'SYS'}]</span>
+        <span class="log-msg ${msgCls}">${this.escapeHtml(e.message || '')}</span>
+      </div>`;
+    }).join('');
+
+    if (autoscroll) {
+      term.scrollTop = term.scrollHeight;
+    }
+  }
+
+  renderEspLogs() {
+    const term = document.getElementById('terminal-esp32');
+    if (!term) return;
+
+    const filterText = (document.getElementById('inp-filter-esp')?.value || '').toLowerCase();
+    const autoscroll = document.getElementById('chk-autoscroll-esp')?.checked ?? true;
+
+    const filtered = this.espLogs.filter((e) => {
+      if (!filterText) return true;
+      return (e.message || '').toLowerCase().includes(filterText);
+    });
+
+    term.innerHTML = filtered.map((e) => {
+      const t = e.timestamp ? new Date(e.timestamp * 1000) : new Date();
+      const timeStr = t.toLocaleTimeString();
+      const msg = e.message || '';
+
+      let badge = 'FSM';
+      let badgeCls = 'fsm';
+      if (msg.includes('[MOTORS]')) { badge = 'MOTORS'; badgeCls = 'motors'; }
+      else if (msg.includes('[SENSORS]')) { badge = 'SENSORS'; badgeCls = 'vision'; }
+      else if (msg.includes('[UART')) { badge = 'UART'; badgeCls = 'uart'; }
+      else if (msg.includes('[SOLENOID]')) { badge = 'SOLENOID'; badgeCls = 'solenoid'; }
+      else if (msg.includes('[TINYML]')) { badge = 'TINYML'; badgeCls = 'vision'; }
+
+      const msgCls = (e.level || 'info').toLowerCase();
+      return `<div class="log-entry">
+        <span class="log-time">[${timeStr}]</span>
+        <span class="log-badge ${badgeCls}">[${badge}]</span>
+        <span class="log-msg ${msgCls}">${this.escapeHtml(msg)}</span>
+      </div>`;
+    }).join('');
+
+    if (autoscroll) {
+      term.scrollTop = term.scrollHeight;
+    }
+  }
+
+  escapeHtml(str) {
+    return str
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
+  updateDashboardHud(dt, telem) {
+    // 1. KPI Cards
+    const kpiState = document.getElementById('kpi-robot-state');
+    if (kpiState) {
+      kpiState.textContent = this.robotState.replace(/_/g, ' ');
+    }
+
+    const kpiMode = document.getElementById('kpi-sync-mode');
+    if (kpiMode) {
+      if (this.syncMode === 'neural') kpiMode.textContent = 'Neural TinyML SIL';
+      else if (this.syncMode === 'sil') kpiMode.textContent = 'Rule-Based SIL (FSM)';
+      else if (this.syncMode === 'teleop') kpiMode.textContent = 'Manual Teleoperation';
+      else if (this.syncMode === 'sim2hw') kpiMode.textContent = `Sim ➔ HW (${this.sim2hwPolicy})`;
+      else kpiMode.textContent = 'Hardware ➔ Sim';
+    }
+
+    const target = this.realVisionTarget || telem.target;
+    const hasFire = !!(telem.flame_detected || (target && target.confidence > 0.4));
+    const kpiThreat = document.getElementById('kpi-fire-threat');
+    const kpiThreatCard = document.getElementById('kpi-card-fire');
+
+    if (kpiThreat && kpiThreatCard) {
+      if (target && target.isConfirmed) {
+        kpiThreat.textContent = '🔥 FIRE CONFIRMED';
+        kpiThreat.style.color = 'var(--accent-red)';
+        kpiThreatCard.className = 'kpi-card danger';
+      } else if (hasFire) {
+        kpiThreat.textContent = '⚠️ CANDIDATE';
+        kpiThreat.style.color = 'var(--accent-yellow)';
+        kpiThreatCard.className = 'kpi-card warning';
+      } else {
+        kpiThreat.textContent = 'CLEAR';
+        kpiThreat.style.color = 'var(--accent-green)';
+        kpiThreatCard.className = 'kpi-card success';
+      }
+    }
+
+    const kpiConf = document.getElementById('kpi-fire-conf');
+    if (kpiConf) {
+      kpiConf.textContent = target ? `${Math.round(target.confidence * 100)}%` : '0%';
+    }
+
+    const kpiDist = document.getElementById('kpi-standoff-dist');
+    if (kpiDist) {
+      const d = (target && target.distanceCm) ? (target.distanceCm / 100.0) : (telem.dist_front / 100.0);
+      kpiDist.textContent = `${d.toFixed(2)} m`;
+    }
+
+    const kpiSol = document.getElementById('kpi-solenoid-state');
+    if (kpiSol) {
+      kpiSol.textContent = telem.solenoid_active ? '💧 SPRAYING' : 'OFF';
+      kpiSol.style.color = telem.solenoid_active ? 'var(--accent-cyan)' : 'var(--accent-green)';
+    }
+
+    const kpiPitch = document.getElementById('kpi-turret-pitch');
+    if (kpiPitch) {
+      kpiPitch.textContent = `${telem.tilt_angle || 90}°`;
+    }
+
+    const kpiOpt = document.getElementById('kpi-optical-status');
+    if (kpiOpt) {
+      kpiOpt.textContent = telem.flame_detected ? 'DETECTED' : 'Clear';
+      kpiOpt.style.color = telem.flame_detected ? 'var(--accent-orange)' : '#fff';
+    }
+
+    // Mission Elapsed Time
+    const kpiTime = document.getElementById('kpi-mission-time');
+    if (kpiTime) {
+      const elapsedSec = Math.floor((Date.now() - this.missionStartTime) / 1000);
+      const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+      const ss = String(elapsedSec % 60).padStart(2, '0');
+      kpiTime.textContent = `${mm}:${ss}`;
+    }
+
+    // Exploration Stats
+    if (this.mapper && this.mapper.explorationGrid) {
+      const grid = this.mapper.explorationGrid;
+      const total = grid.cells ? grid.cells.length : (grid.gridWidth * grid.gridHeight);
+      const pct = Math.min(100, Math.round(((grid.discoveredCount || 0) / (total || 1)) * 100));
+      const kpiCov = document.getElementById('kpi-map-coverage');
+      if (kpiCov) kpiCov.textContent = `${pct}%`;
+    }
+
+    // 2. Sensor Gauges (dual cm / in)
+    const updateDashGauge = (prefix, valCm) => {
+      const bar = document.getElementById(`dash-gauge-${prefix}`);
+      const txtCm = document.getElementById(`dash-gauge-txt-${prefix}`);
+      const txtIn = document.getElementById(`dash-gauge-in-${prefix}`);
+
+      if (bar && txtCm && txtIn) {
+        const pct = Math.min(100, Math.max(0, (valCm / 300.0) * 100));
+        bar.style.width = `${pct}%`;
+        txtCm.textContent = `${valCm.toFixed(1)} cm`;
+        txtIn.textContent = `${(valCm * 0.393701).toFixed(1)} in`;
+
+        if (valCm < 25.4) { // < 10 inches
+          bar.style.backgroundColor = 'var(--accent-red)';
+        } else if (valCm < 45.0) {
+          bar.style.backgroundColor = 'var(--accent-yellow)';
+        } else {
+          bar.style.backgroundColor = 'var(--accent-green)';
+        }
+      }
+    };
+
+    updateDashGauge('front', telem.dist_front);
+    updateDashGauge('left', telem.dist_left);
+    updateDashGauge('right', telem.dist_right);
+
+    // Motor PWM bars
+    const updateMotorBar = (side, pwm) => {
+      const bar = document.getElementById(`dash-motor-bar-${side}`);
+      const txt = document.getElementById(`dash-motor-txt-${side}`);
+      if (bar && txt) {
+        const pct = Math.min(100, Math.round((Math.abs(pwm) / 255.0) * 100));
+        bar.style.width = `${pct}%`;
+        bar.style.background = (pwm >= 0)
+          ? 'linear-gradient(90deg, var(--accent-cyan), #3b82f6)'
+          : 'linear-gradient(90deg, var(--accent-orange), var(--accent-red))';
+        txt.textContent = `${pwm}`;
+      }
+    };
+
+    updateMotorBar('left', telem.left_pwm);
+    updateMotorBar('right', telem.right_pwm);
+
+    // Flame & Solenoid Indicators in matrix
+    const dFlameDot = document.getElementById('dash-flame-dot');
+    const dFlameTxt = document.getElementById('dash-flame-txt');
+    if (dFlameDot && dFlameTxt) {
+      if (telem.flame_detected) {
+        dFlameDot.classList.add('active-flame');
+        dFlameTxt.textContent = 'DETECTED';
+        dFlameTxt.style.color = 'var(--accent-orange)';
+      } else {
+        dFlameDot.classList.remove('active-flame');
+        dFlameTxt.textContent = 'CLEAR';
+        dFlameTxt.style.color = '#fff';
+      }
+    }
+
+    const dSolDot = document.getElementById('dash-solenoid-dot');
+    const dSolTxt = document.getElementById('dash-solenoid-txt');
+    if (dSolDot && dSolTxt) {
+      if (telem.solenoid_active) {
+        dSolDot.classList.add('active-solenoid');
+        dSolTxt.textContent = 'SPRAYING';
+        dSolTxt.style.color = 'var(--accent-cyan)';
+      } else {
+        dSolDot.classList.remove('active-solenoid');
+        dSolTxt.textContent = 'OFF';
+        dSolTxt.style.color = '#fff';
+      }
+    }
+
+    // 3. Mini-Map Drawing (10 Hz)
+    this.minimapTimer = (this.minimapTimer || 0) + (dt || 0.016);
+    if (this.minimapTimer >= 0.10) {
+      this.minimapTimer = 0;
+      this.drawTacticalMiniMap();
+    }
+
+    // 4. Strip Chart (2 Hz)
+    this.chartTimer = (this.chartTimer || 0) + (dt || 0.016);
+    if (this.chartTimer >= 0.50) {
+      this.chartTimer = 0;
+      this.telemetryHistory.push({
+        time: Date.now(),
+        front: telem.dist_front,
+        left: telem.dist_left,
+        right: telem.dist_right,
+        leftPwm: telem.left_pwm,
+        rightPwm: telem.right_pwm,
+        flameConf: target ? target.confidence * 100 : 0
+      });
+      if (this.telemetryHistory.length > 60) this.telemetryHistory.shift();
+      this.renderTelemetryChart();
+    }
+  }
+
+  drawTacticalMiniMap() {
+    const canvas = document.getElementById('dashboard-map-canvas');
+    if (!canvas || !this.mapper || !this.mapper.explorationGrid) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.fillStyle = '#05080e';
+    ctx.fillRect(0, 0, w, h);
+
+    const grid = this.mapper.explorationGrid;
+    const dim = grid.gridWidth;
+    const cellSizeX = w / dim;
+    const cellSizeY = h / dim;
+
+    // Draw grid cells
+    for (let gy = 0; gy < dim; gy++) {
+      for (let gx = 0; gx < dim; gx++) {
+        const state = grid.cells[gy * dim + gx];
+        if (state === 1) { // Free / Explored
+          ctx.fillStyle = 'rgba(0, 210, 255, 0.15)';
+          ctx.fillRect(gx * cellSizeX, gy * cellSizeY, cellSizeX, cellSizeY);
+        } else if (state === 2) { // Occupied Wall
+          ctx.fillStyle = 'rgba(255, 51, 75, 0.85)';
+          ctx.fillRect(gx * cellSizeX, gy * cellSizeY, cellSizeX, cellSizeY);
+        }
+      }
+    }
+
+    // Draw Robot Position & Heading
+    const rpos = this.robot.position;
+    const ryaw = this.robot.yaw;
+    const rx = ((rpos.x + grid.halfSize) / (grid.halfSize * 2)) * w;
+    const ry = ((rpos.z + grid.halfSize) / (grid.halfSize * 2)) * h;
+
+    ctx.save();
+    ctx.translate(rx, ry);
+    ctx.rotate(ryaw);
+
+    // Robot body
+    ctx.fillStyle = '#00d2ff';
+    ctx.beginPath();
+    ctx.arc(0, 0, 5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Direction pointer
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(0, 10);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // Draw Frontiers if available
+    if (this.mapper.lastFrontierGoals && this.mapper.lastFrontierGoals.length > 0) {
+      ctx.fillStyle = '#ffd600';
+      for (const fg of this.mapper.lastFrontierGoals) {
+        const fx = ((fg.x + grid.halfSize) / (grid.halfSize * 2)) * w;
+        const fy = ((fg.z + grid.halfSize) / (grid.halfSize * 2)) * h;
+        ctx.beginPath();
+        ctx.arc(fx, fy, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+  }
+
+  renderTelemetryChart() {
+    const canvas = document.getElementById('dashboard-chart-canvas');
+    if (!canvas || this.telemetryHistory.length === 0) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.fillStyle = '#04070a';
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.06)';
+    ctx.lineWidth = 1;
+    for (let y = 20; y < h; y += 30) {
+      ctx.beginPath();
+      ctx.moveTo(40, y);
+      ctx.lineTo(w - 10, y);
+      ctx.stroke();
+    }
+
+    const n = this.telemetryHistory.length;
+    const stepX = (w - 60) / Math.max(1, n - 1);
+
+    const drawLine = (prop, color, minVal, maxVal) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const val = this.telemetryHistory[i][prop] || 0;
+        const norm = Math.max(0, Math.min(1, (val - minVal) / (maxVal - minVal)));
+        const x = 45 + i * stepX;
+        const y = h - 20 - norm * (h - 40);
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    };
+
+    if (this.activeChartChannel === 'sensors') {
+      drawLine('front', '#00d2ff', 0, 300);
+      drawLine('left', '#00e676', 0, 300);
+      drawLine('right', '#ffd600', 0, 300);
+
+      // Y-axis labels
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px monospace';
+      ctx.fillText('300cm', 5, 25);
+      ctx.fillText('150cm', 5, (h / 2) + 5);
+      ctx.fillText('0cm', 12, h - 18);
+    } else if (this.activeChartChannel === 'pwm') {
+      drawLine('leftPwm', '#00d2ff', -255, 255);
+      drawLine('rightPwm', '#ff7b00', -255, 255);
+
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px monospace';
+      ctx.fillText('+255', 10, 25);
+      ctx.fillText('0', 25, (h / 2) + 5);
+      ctx.fillText('-255', 10, h - 18);
+    } else if (this.activeChartChannel === 'flame') {
+      drawLine('flameConf', '#ff334b', 0, 100);
+
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px monospace';
+      ctx.fillText('100%', 10, 25);
+      ctx.fillText('50%', 15, (h / 2) + 5);
+      ctx.fillText('0%', 20, h - 18);
+    }
+  }
 }
+

@@ -55,6 +55,16 @@ class ExplorationGrid {
     return { x, z };
   }
 
+  getExplorationStats() {
+    const total = this.cells.length || (this.gridWidth * this.gridHeight);
+    const discovered = this.discoveredCount || 0;
+    return {
+      totalCells: total,
+      discoveredCells: discovered,
+      exploredPercent: Math.min(100, (discovered / total) * 100)
+    };
+  }
+
   getCell(gx, gz) {
     if (gx < 0 || gx >= this.gridWidth || gz < 0 || gz >= this.gridHeight) return 0;
     return this.cells[gz * this.gridWidth + gx];

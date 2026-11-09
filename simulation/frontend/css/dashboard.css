@@ -745,3 +745,625 @@ html, body {
   z-index: 100;
   display: none;
 }
+
+/* =============================================================================
+   PAGE NAVIGATION & MAIN OPERATIONS DASHBOARD SYSTEM
+   ============================================================================= */
+
+/* Navbar Navigation Tabs */
+.nav-tab-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(10, 14, 20, 0.6);
+  padding: 4px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.nav-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  padding: 6px 14px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.nav-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.nav-tab.active {
+  background: rgba(0, 210, 255, 0.15);
+  border-color: rgba(0, 210, 255, 0.4);
+  color: var(--accent-cyan);
+  box-shadow: 0 0 12px rgba(0, 210, 255, 0.2);
+}
+
+.nav-tab-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: rgba(0, 210, 255, 0.2);
+  color: var(--accent-cyan);
+  font-family: var(--font-mono);
+}
+
+/* Page Views */
+.page-view {
+  display: none;
+}
+
+.page-view.active {
+  display: block;
+}
+
+#page-dashboard {
+  position: absolute;
+  top: 72px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 16px 20px 40px;
+  background: radial-gradient(circle at top right, rgba(16, 36, 64, 0.3) 0%, rgba(10, 14, 20, 0.95) 70%);
+  z-index: 5;
+}
+
+#page-simulation {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+
+/* Custom Slim Scrollbars */
+#page-dashboard::-webkit-scrollbar,
+.terminal-window::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+#page-dashboard::-webkit-scrollbar-track,
+.terminal-window::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+}
+
+#page-dashboard::-webkit-scrollbar-thumb,
+.terminal-window::-webkit-scrollbar-thumb {
+  background: rgba(64, 130, 200, 0.3);
+  border-radius: 3px;
+}
+
+#page-dashboard::-webkit-scrollbar-thumb:hover,
+.terminal-window::-webkit-scrollbar-thumb:hover {
+  background: var(--accent-cyan);
+}
+
+/* KPI Summary Metric Cards */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+.kpi-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(8px);
+}
+
+.kpi-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--accent-cyan);
+  opacity: 0.6;
+}
+
+.kpi-card.warning::before {
+  background: var(--accent-orange);
+}
+
+.kpi-card.danger::before {
+  background: var(--accent-red);
+}
+
+.kpi-card.success::before {
+  background: var(--accent-green);
+}
+
+.kpi-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.kpi-label {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+}
+
+.kpi-icon {
+  font-size: 14px;
+}
+
+.kpi-val {
+  font-size: 22px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  color: #fff;
+  letter-spacing: 0.5px;
+}
+
+.kpi-subtext {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Dual Hardware Console Terminals */
+.consoles-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 1024px) {
+  .consoles-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.terminal-card {
+  background: #06090e;
+  border: 1px solid rgba(64, 130, 200, 0.35);
+  border-radius: 8px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.terminal-card.pi-card {
+  border-color: rgba(255, 51, 75, 0.35);
+}
+
+.terminal-card.esp32-card {
+  border-color: rgba(0, 210, 255, 0.35);
+}
+
+.terminal-header {
+  background: rgba(16, 23, 34, 0.95);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.terminal-title-area {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.terminal-led {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 8px var(--accent-green);
+  animation: pulse-led 2s infinite ease-in-out;
+}
+
+@keyframes pulse-led {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(0.9); }
+}
+
+.terminal-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: #fff;
+}
+
+.terminal-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.terminal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.term-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: var(--text-muted);
+  padding: 3px 8px;
+  border-radius: 4px;
+  font-size: 10px;
+  cursor: pointer;
+  font-family: var(--font-mono);
+  transition: all 0.2s ease;
+}
+
+.term-btn:hover {
+  background: rgba(255, 255, 255, 0.15);
+  color: #fff;
+}
+
+.term-filter {
+  background: #0a0e14;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+}
+
+.terminal-window {
+  height: 290px;
+  overflow-y: auto;
+  padding: 10px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.5;
+  background: #04070a;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.log-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  word-break: break-word;
+  animation: fadeInLog 0.15s ease-in;
+}
+
+@keyframes fadeInLog {
+  from { opacity: 0; transform: translateY(2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.log-time {
+  color: rgba(255, 255, 255, 0.35);
+  font-size: 10px;
+  flex-shrink: 0;
+}
+
+.log-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 700;
+  flex-shrink: 0;
+  text-transform: uppercase;
+}
+
+.log-badge.vision { background: rgba(0, 210, 255, 0.2); color: var(--accent-cyan); border: 1px solid rgba(0, 210, 255, 0.4); }
+.log-badge.uart { background: rgba(255, 123, 0, 0.2); color: var(--accent-orange); border: 1px solid rgba(255, 123, 0, 0.4); }
+.log-badge.system { background: rgba(255, 255, 255, 0.1); color: #ccc; border: 1px solid rgba(255, 255, 255, 0.2); }
+.log-badge.fsm { background: rgba(0, 230, 118, 0.2); color: var(--accent-green); border: 1px solid rgba(0, 230, 118, 0.4); }
+.log-badge.motors { background: rgba(255, 214, 0, 0.2); color: var(--accent-yellow); border: 1px solid rgba(255, 214, 0, 0.4); }
+.log-badge.solenoid { background: rgba(255, 51, 75, 0.2); color: var(--accent-red); border: 1px solid rgba(255, 51, 75, 0.4); }
+
+.log-msg {
+  color: #d1d5db;
+  flex: 1;
+}
+
+.log-msg.warn { color: var(--accent-yellow); }
+.log-msg.error { color: var(--accent-red); font-weight: 700; }
+
+.terminal-footer {
+  background: rgba(16, 23, 34, 0.8);
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  padding: 6px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+}
+
+.footer-pill-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.footer-pill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.footer-pill span {
+  color: #fff;
+}
+
+/* Dashboard Lower Grid: Telemetry, Mini-Map, Bench Controls */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: 1.1fr 1fr 1.1fr;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+@media (max-width: 1200px) {
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.dash-panel {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.dash-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: 8px;
+}
+
+.dash-panel-title span {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: #fff;
+}
+
+.dash-panel-title .dash-badge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent-cyan);
+}
+
+/* Gauge Dual Units cm/in */
+.gauge-dual-val {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  width: 70px;
+}
+
+.gauge-dual-val .val-cm {
+  color: #fff;
+  font-weight: 700;
+}
+
+.gauge-dual-val .val-in {
+  color: var(--text-muted);
+  font-size: 9px;
+}
+
+/* Motor Dual Bar Display */
+.motor-gauge-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.motor-gauge-name {
+  width: 50px;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.motor-gauge-bar-wrap {
+  flex: 1;
+  height: 12px;
+  background: rgba(0, 0, 0, 0.4);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+  position: relative;
+}
+
+.motor-gauge-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--accent-cyan), #3b82f6);
+  border-radius: 3px;
+  transition: width 0.1s linear;
+}
+
+.motor-gauge-val {
+  width: 45px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-align: right;
+  color: #fff;
+}
+
+/* Dashboard Tactical Mini-Map Canvas */
+.minimap-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+#dashboard-map-canvas {
+  width: 100%;
+  max-width: 320px;
+  height: 220px;
+  background: #05080e;
+  border: 1px solid rgba(0, 210, 255, 0.3);
+  border-radius: 6px;
+  display: block;
+}
+
+.minimap-legend {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.legend-box {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}
+
+/* Bench Test Action Buttons */
+.bench-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+
+.bench-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  padding: 8px 10px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  font-family: inherit;
+}
+
+.bench-btn:hover {
+  background: rgba(0, 210, 255, 0.2);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+.bench-btn.danger {
+  border-color: rgba(255, 51, 75, 0.4);
+}
+
+.bench-btn.danger:hover {
+  background: rgba(255, 51, 75, 0.25);
+  border-color: var(--accent-red);
+  color: #fff;
+}
+
+.bench-btn.warning {
+  border-color: rgba(255, 123, 0, 0.4);
+}
+
+.bench-btn.warning:hover {
+  background: rgba(255, 123, 0, 0.25);
+  border-color: var(--accent-orange);
+  color: #fff;
+}
+
+/* Telemetry Strip Chart Card */
+.chart-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+}
+
+.chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.chart-pills {
+  display: flex;
+  gap: 6px;
+}
+
+.chart-pill {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: var(--font-mono);
+  border: 1px solid transparent;
+}
+
+.chart-pill.active {
+  background: rgba(0, 210, 255, 0.15);
+  border-color: var(--accent-cyan);
+  color: var(--accent-cyan);
+}
+
+#dashboard-chart-canvas {
+  width: 100%;
+  height: 140px;
+  background: #04070a;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  display: block;
+}
+

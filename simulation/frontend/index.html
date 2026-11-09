@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BANTAY-SUNOG 3D Digital Twin Simulator</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=2">
+  <title>BANTAY-SUNOG: Operations Dashboard & 3D Digital Twin</title>
+  <link rel="stylesheet" href="css/dashboard.css?v=8">
   <!-- Three.js & Controls from trusted CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -13,26 +13,32 @@
 </head>
 <body>
 
-  <!-- Fullscreen 3D Scene Viewport -->
+  <!-- Fullscreen Three.js 3D Viewport (always running in background) -->
   <div id="canvas-container"></div>
 
-  <!-- Top Telemetry & Status HUD -->
+  <!-- Top Global Telemetry & Navigation Header HUD -->
   <header class="top-hud">
     <div class="brand">
       <span class="brand-icon">🔥</span>
       <span class="brand-title">BANTAY-SUNOG</span>
-      <span class="brand-badge">3D DIGITAL TWIN</span>
+      <span class="brand-badge">SAGIP-X</span>
     </div>
 
+    <!-- Main Navigation Tab Group -->
+    <div class="nav-tab-group">
+      <button id="tab-nav-dashboard" class="nav-tab active" data-page="dashboard">
+        <span class="tab-icon">📊</span> Operations Dashboard
+      </button>
+      <button id="tab-nav-simulation" class="nav-tab" data-page="simulation">
+        <span class="tab-icon">🎮</span> 3D Digital Twin <span class="nav-tab-badge">SIM</span>
+      </button>
+    </div>
+
+    <!-- Live Telemetry Status Row -->
     <div class="telemetry-row">
       <div class="telemetry-item">
         <span class="telemetry-label">SYSTEM STATE</span>
         <span id="hud-state-badge" class="state-badge searching">SEARCHING</span>
-      </div>
-
-      <div class="telemetry-item">
-        <span class="telemetry-label">TILT SERVO</span>
-        <span id="hud-tilt-txt" class="telemetry-value">90°</span>
       </div>
 
       <div class="telemetry-item">
@@ -47,284 +53,564 @@
           <span id="ws-status-text">STANDALONE (LOCAL)</span>
         </div>
       </div>
+
+      <button id="btn-global-estop" class="btn-tool danger" style="padding: 6px 12px; font-weight: bold; letter-spacing: 1px;">🛑 E-STOP</button>
     </div>
   </header>
 
-  <!-- View Mode Switcher Buttons -->
-  <div class="view-modes">
-    <button class="view-btn active" data-view="orbit">🌐 Orbit View</button>
-    <button class="view-btn" data-view="follow">🏎️ Follow Cam</button>
-    <button class="view-btn" data-view="top">📐 Top Down</button>
-  </div>
-
-  <!-- Placement Hint Floating Pill -->
-  <div id="placement-hint" class="placement-hint">Click on the floor to place object</div>
-
-  <!-- Right Sidebar: Controls & Live Hardware Readings -->
-  <aside class="control-sidebar">
-    <!-- Environment & Obstacle Placement Card -->
-    <div class="panel-card">
-      <div class="panel-title">
-        <span>Arena Environment</span>
-        <span class="panel-subtitle">Interactive Control</span>
+  <!-- =========================================================================
+       PAGE 1: MAIN OPERATIONS DASHBOARD
+       ========================================================================= -->
+  <main id="page-dashboard" class="page-view active">
+    <!-- Row 1: KPI Stat Cards -->
+    <section class="kpi-row">
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">ROBOT STATUS</span>
+          <span class="kpi-icon">🤖</span>
+        </div>
+        <div id="kpi-robot-state" class="kpi-val" style="color: var(--accent-cyan);">SEARCHING</div>
+        <div class="kpi-subtext">Mode: <span id="kpi-sync-mode" style="color: #fff;">Neural TinyML SIL</span></div>
       </div>
-      <div class="layout-selector-row" style="margin-bottom: 8px;">
-        <label for="select-arena-layout" style="font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 3px;">Environment Layout:</label>
-        <select id="select-arena-layout" class="layout-dropdown" style="width: 100%; padding: 6px 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--border-color); color: #fff; border-radius: 4px; font-size: 12px; font-family: inherit;">
-          <option value="arena">🏟️ Open Training Arena (Default)</option>
-          <option value="multi-room">🏢 Multi-Room Facility (4 Rooms + Corridor)</option>
-          <option value="maze">🧩 Search & Rescue Labyrinth Maze</option>
-        </select>
+
+      <div class="kpi-card" id="kpi-card-fire">
+        <div class="kpi-header">
+          <span class="kpi-label">FIRE THREAT</span>
+          <span class="kpi-icon">🔥</span>
+        </div>
+        <div id="kpi-fire-threat" class="kpi-val">CLEAR</div>
+        <div class="kpi-subtext">Confidence: <span id="kpi-fire-conf" style="color: #fff;">0%</span> | Standoff: <span id="kpi-standoff-dist" style="color: #fff;">-- m</span></div>
       </div>
-      <div class="tool-grid">
-        <button id="btn-add-fire" class="btn-tool fire">🔥 Add Fire</button>
-        <button id="btn-add-box" class="btn-tool">📦 Add Crate</button>
-        <button id="btn-add-wall" class="btn-tool">🧱 Add Wall</button>
-        <button id="btn-add-cylinder" class="btn-tool">🛢️ Add Barrel</button>
-        <button id="btn-clear-fires" class="btn-tool danger">💨 Clear Fires</button>
-        <button id="btn-randomize-arena" class="btn-tool">🎲 Randomize</button>
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">SUPPRESSION ACTUATOR</span>
+          <span class="kpi-icon">💧</span>
+        </div>
+        <div id="kpi-solenoid-state" class="kpi-val" style="color: var(--accent-green);">OFF</div>
+        <div class="kpi-subtext">Turret Pitch: <span id="kpi-turret-pitch" style="color: #fff;">90°</span> | Optical IR: <span id="kpi-optical-status" style="color: #fff;">Clear</span></div>
       </div>
-      <button id="btn-reset-robot" class="btn-tool" style="width: 100%; margin-top: 8px;">🔄 Reset Robot to Origin</button>
-    </div>
 
-    <!-- Obstacle Sandbox Inspector (Shows when an obstacle is selected) -->
-    <div id="obstacle-inspector-card" class="panel-card" style="display: none; border-color: rgba(0, 240, 255, 0.4);">
-      <div class="panel-title">
-        <span>Obstacle Inspector</span>
-        <span id="inspector-obs-id" class="panel-subtitle" style="color: var(--accent-cyan);">#1 Box</span>
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">SERIAL / LINK HEALTH</span>
+          <span class="kpi-icon">⚡</span>
+        </div>
+        <div id="kpi-link-status" class="kpi-val" style="color: var(--accent-yellow);">115200 8-N-1</div>
+        <div class="kpi-subtext">Port: <span id="kpi-com-port" style="color: #fff;">Virtual Loopback</span> | Ping: <span id="kpi-ws-latency" style="color: #fff;">1.8 ms</span></div>
       </div>
-      <div class="inspector-controls" style="display: flex; flex-direction: column; gap: 6px; font-size: 11px;">
-        <div style="display: flex; gap: 8px;">
-          <div style="flex: 1;">
-            <label style="color: var(--text-dim); display: block;">Pos X (m):</label>
-            <input type="number" id="inp-obs-x" step="0.1" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+
+      <div class="kpi-card">
+        <div class="kpi-header">
+          <span class="kpi-label">EXPLORATION & MISSION</span>
+          <span class="kpi-icon">🗺️</span>
+        </div>
+        <div id="kpi-map-coverage" class="kpi-val">0%</div>
+        <div class="kpi-subtext">Elapsed: <span id="kpi-mission-time" style="color: #fff;">00:00</span> | Extinguished: <span id="kpi-extinguished-count" style="color: #fff;">0</span></div>
+      </div>
+    </section>
+
+    <!-- Row 2: Dual Hardware Console Terminals (Side-by-Side) -->
+    <section class="consoles-grid">
+      <!-- Raspberry Pi 3B Console Card -->
+      <div class="terminal-card pi-card">
+        <div class="terminal-header">
+          <div class="terminal-title-area">
+            <div id="pi-led" class="terminal-led" style="background: var(--accent-red); box-shadow: 0 0 8px var(--accent-red);"></div>
+            <div>
+              <div class="terminal-title">🍓 Raspberry Pi 3B Console</div>
+              <div class="terminal-subtitle">Vision AI & UART Telemetry Transmitter (/dev/ttyAMA0)</div>
+            </div>
           </div>
-          <div style="flex: 1;">
-            <label style="color: var(--text-dim); display: block;">Pos Z (m):</label>
-            <input type="number" id="inp-obs-z" step="0.1" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+          <div class="terminal-actions">
+            <label style="font-size: 10px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; cursor: pointer;">
+              <input type="checkbox" id="chk-autoscroll-pi" checked> Auto-Scroll
+            </label>
+            <select id="sel-filter-pi" class="term-filter">
+              <option value="ALL">ALL LOGS</option>
+              <option value="VISION">[VISION]</option>
+              <option value="UART">[UART]</option>
+              <option value="SYSTEM">[SYSTEM]</option>
+              <option value="WARN">WARNINGS/ERR</option>
+            </select>
+            <button id="btn-clear-pi" class="term-btn">✕ Clear</button>
+            <button id="btn-copy-pi" class="term-btn">📋 Copy</button>
           </div>
         </div>
 
-        <div id="inspector-box-dims" style="display: flex; gap: 8px;">
-          <div style="flex: 1;">
-            <label style="color: var(--text-dim); display: block;">Width (m):</label>
-            <input type="number" id="inp-obs-w" step="0.1" min="0.2" max="8.0" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
-          </div>
-          <div style="flex: 1;">
-            <label style="color: var(--text-dim); display: block;">Depth (m):</label>
-            <input type="number" id="inp-obs-d" step="0.1" min="0.1" max="8.0" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
-          </div>
+        <div id="terminal-pi" class="terminal-window">
+          <!-- Live log lines appended dynamically -->
         </div>
 
-        <div id="inspector-cyl-dims" style="display: none;">
-          <div>
-            <label style="color: var(--text-dim); display: block;">Radius (m):</label>
-            <input type="number" id="inp-obs-r" step="0.05" min="0.1" max="2.5" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+        <div class="terminal-footer">
+          <div class="footer-pill-row">
+            <div class="footer-pill">CPU: <span id="pi-stat-cpu">24.8%</span></div>
+            <div class="footer-pill">Temp: <span id="pi-stat-temp">48.2°C</span></div>
+            <div class="footer-pill">RAM: <span id="pi-stat-ram">312MB</span></div>
+            <div class="footer-pill">FPS: <span id="pi-stat-fps">29.8</span></div>
           </div>
-        </div>
-
-        <div style="display: flex; gap: 8px;">
-          <div style="flex: 1;">
-            <label style="color: var(--text-dim); display: block;">Height (m):</label>
-            <input type="number" id="inp-obs-h" step="0.05" min="0.2" max="2.5" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
-          </div>
-          <div style="flex: 1;">
-            <label style="color: var(--text-dim); display: block;">Yaw (°): <span id="txt-obs-rot" style="color: var(--accent-cyan);">0°</span></label>
-            <input type="range" id="inp-obs-rot" min="0" max="360" value="0" style="width: 100%;">
-          </div>
-        </div>
-
-        <div style="display: flex; gap: 6px; margin-top: 4px;">
-          <button id="btn-obs-duplicate" class="btn-tool" style="flex: 1;">📋 Duplicate</button>
-          <button id="btn-obs-delete" class="btn-tool danger" style="flex: 1;">🗑️ Delete</button>
-          <button id="btn-obs-deselect" class="btn-tool" style="flex: 1;">✕ Close</button>
+          <div class="footer-pill">Backend: <span id="pi-stat-backend" style="color: var(--accent-cyan);">tflite_int8</span></div>
         </div>
       </div>
-    </div>
 
-    <!-- Digital Twin Synchronization Modes -->
-    <div class="panel-card">
-      <div class="panel-title">
-        <span>Digital Twin Sync Mode</span>
-        <span class="panel-subtitle">Hardware Link</span>
+      <!-- ESP32-WROOM Controller Console Card -->
+      <div class="terminal-card esp32-card">
+        <div class="terminal-header">
+          <div class="terminal-title-area">
+            <div id="esp-led" class="terminal-led" style="background: var(--accent-cyan); box-shadow: 0 0 8px var(--accent-cyan);"></div>
+            <div>
+              <div class="terminal-title">⚡ ESP32-WROOM Actuation Console</div>
+              <div class="terminal-subtitle">FreeRTOS Dual-Core Navigation & Actuation Controller</div>
+            </div>
+          </div>
+          <div class="terminal-actions">
+            <label style="font-size: 10px; color: var(--text-muted); display: flex; align-items: center; gap: 4px; cursor: pointer;">
+              <input type="checkbox" id="chk-autoscroll-esp" checked> Auto-Scroll
+            </label>
+            <input type="text" id="inp-filter-esp" class="term-filter" placeholder="Filter..." style="width: 75px;">
+            <button id="btn-clear-esp" class="term-btn">✕ Clear</button>
+            <button id="btn-copy-esp" class="term-btn">📋 Copy</button>
+          </div>
+        </div>
+
+        <div id="terminal-esp32" class="terminal-window">
+          <!-- Live log lines appended dynamically -->
+        </div>
+
+        <div class="terminal-footer">
+          <div class="footer-pill-row">
+            <div class="footer-pill">Uptime: <span id="esp-stat-uptime">00:00:00</span></div>
+            <div class="footer-pill">Free Heap: <span id="esp-stat-heap">278 KB</span></div>
+            <div class="footer-pill">Cycle: <span id="esp-stat-cycle">0.12 ms</span></div>
+          </div>
+          <div class="footer-pill">Safety Interlock: <span id="esp-stat-safety" style="color: var(--accent-green);">ARMED</span></div>
+        </div>
       </div>
-      <div class="sync-mode-selector">
-        <div class="mode-radio selected" data-mode="neural">
-          <div class="mode-info">
-            <span class="mode-name">🧠 Neural TinyML SIL (Continuous Policy)</span>
-            <span class="mode-desc">Smooth continuous obstacle avoidance & fire homing via MLP navigation model</span>
-          </div>
+    </section>
+
+    <!-- Row 3: Hardware Telemetry Matrix, Tactical Mini-Map, Bench Controls -->
+    <section class="dashboard-grid">
+      <!-- Col 1: Live Hardware Telemetry Readouts -->
+      <div class="dash-panel">
+        <div class="dash-panel-title">
+          <span>📡 Sensor & Motor Matrix</span>
+          <span class="dash-badge">HC-SR04 & TB6612</span>
         </div>
 
-        <div class="mode-radio" data-mode="sil">
-          <div class="mode-info">
-            <span class="mode-name">🤖 Rule-Based SIL (Legacy FSM)</span>
-            <span class="mode-desc">Discrete state machine sweep, pivot turns, and timeout recovery</span>
+        <!-- Ultrasonic Dual CM/Inch Gauges -->
+        <div class="ultrasonic-gauges">
+          <div class="gauge-row">
+            <span class="gauge-name">FRONT:</span>
+            <div class="gauge-bar-container">
+              <div id="dash-gauge-front" class="gauge-bar"></div>
+            </div>
+            <div class="gauge-dual-val">
+              <span id="dash-gauge-txt-front" class="val-cm">-- cm</span>
+              <span id="dash-gauge-in-front" class="val-in">-- in</span>
+            </div>
           </div>
-        </div>
 
-        <div class="mode-radio" data-mode="teleop">
-          <div class="mode-info">
-            <span class="mode-name">🎮 Manual Teleop (WASD)</span>
-            <span class="mode-desc">Direct keyboard or keypad steering & suppression control</span>
+          <div class="gauge-row">
+            <span class="gauge-name">LEFT:</span>
+            <div class="gauge-bar-container">
+              <div id="dash-gauge-left" class="gauge-bar"></div>
+            </div>
+            <div class="gauge-dual-val">
+              <span id="dash-gauge-txt-left" class="val-cm">-- cm</span>
+              <span id="dash-gauge-in-left" class="val-in">-- in</span>
+            </div>
           </div>
-        </div>
 
-        <div class="mode-radio" data-mode="sim2hw">
-          <div class="mode-info">
-            <span class="mode-name">💻 Sim ➔ Physical Hardware</span>
-            <span class="mode-desc">Simulated robot commands drive the physical ESP32 motors & tilt servo</span>
-            <div id="sim2hw-policy-group" class="sim2hw-policy-group" style="display: none; margin-top: 6px; padding: 4px 6px; background: rgba(0,0,0,0.3); border-radius: 4px;">
-              <span style="font-size: 10px; color: var(--text-dim); margin-right: 4px;">Drive Policy:</span>
-              <button class="policy-pill active" data-policy="neural" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: var(--accent-cyan); color: #000; border: none; cursor: pointer;">🧠 Neural TinyML</button>
-              <button class="policy-pill" data-policy="sil" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: rgba(255,255,255,0.1); color: #fff; border: none; cursor: pointer; margin-left: 2px;">🤖 Rule-Based SIL</button>
-              <button class="policy-pill" data-policy="teleop" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: rgba(255,255,255,0.1); color: #fff; border: none; cursor: pointer; margin-left: 2px;">🎮 Teleop</button>
+          <div class="gauge-row">
+            <span class="gauge-name">RIGHT:</span>
+            <div class="gauge-bar-container">
+              <div id="dash-gauge-right" class="gauge-bar"></div>
+            </div>
+            <div class="gauge-dual-val">
+              <span id="dash-gauge-txt-right" class="val-cm">-- cm</span>
+              <span id="dash-gauge-in-right" class="val-in">-- in</span>
             </div>
           </div>
         </div>
 
-        <div class="mode-radio" data-mode="hw2sim">
-          <div class="mode-info">
-            <span class="mode-name">🦾 Physical Hardware ➔ Sim</span>
-            <span class="mode-desc">Real ESP32 telemetry drives the virtual 3D twin in real-time</span>
+        <!-- Motor Drive Dual Bars -->
+        <div style="margin-top: 6px;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px; font-weight: 600;">TB6612FNG MOTOR PWM OUTPUTS:</div>
+          <div class="motor-gauge-row">
+            <span class="motor-gauge-name">LEFT:</span>
+            <div class="motor-gauge-bar-wrap">
+              <div id="dash-motor-bar-left" class="motor-gauge-fill" style="width: 0%;"></div>
+            </div>
+            <span id="dash-motor-txt-left" class="motor-gauge-val">0</span>
+          </div>
+          <div class="motor-gauge-row">
+            <span class="motor-gauge-name">RIGHT:</span>
+            <div class="motor-gauge-bar-wrap">
+              <div id="dash-motor-bar-right" class="motor-gauge-fill" style="width: 0%;"></div>
+            </div>
+            <span id="dash-motor-txt-right" class="motor-gauge-val">0</span>
+          </div>
+        </div>
+
+        <!-- Flame & Solenoid Indicators -->
+        <div class="actuator-indicators" style="margin-top: 8px;">
+          <div class="actuator-box">
+            <div class="actuator-box-label">LM393 Optical Flame</div>
+            <div class="actuator-box-val">
+              <span id="dash-flame-dot" class="indicator-dot"></span>
+              <span id="dash-flame-txt">CLEAR</span>
+            </div>
+          </div>
+          <div class="actuator-box">
+            <div class="actuator-box-label">Extinguisher Solenoid</div>
+            <div class="actuator-box-val">
+              <span id="dash-solenoid-dot" class="indicator-dot"></span>
+              <span id="dash-solenoid-txt">OFF</span>
+            </div>
           </div>
         </div>
       </div>
+
+      <!-- Col 2: Live Tactical 2D SLAM Mini-Map -->
+      <div class="dash-panel">
+        <div class="dash-panel-title">
+          <span>🗺️ Tactical SLAM Mini-Map</span>
+          <span id="dash-map-frontier-badge" class="dash-badge">45x45 GRID</span>
+        </div>
+        <div class="minimap-container">
+          <canvas id="dashboard-map-canvas" width="300" height="200"></canvas>
+          <div class="minimap-legend">
+            <div class="legend-item"><div class="legend-box" style="background: var(--accent-cyan);"></div> Robot</div>
+            <div class="legend-item"><div class="legend-box" style="background: rgba(0, 210, 255, 0.2);"></div> Explored</div>
+            <div class="legend-item"><div class="legend-box" style="background: var(--accent-red);"></div> Walls</div>
+            <div class="legend-item"><div class="legend-box" style="background: var(--accent-yellow);"></div> Frontiers</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Col 3: Hardware Diagnostics & Bench Test Command Center -->
+      <div class="dash-panel">
+        <div class="dash-panel-title">
+          <span>🛠️ Hardware Bench Testing</span>
+          <span class="dash-badge">UART COMMANDS</span>
+        </div>
+        <div class="bench-grid">
+          <button class="bench-btn" data-cmd="w">⬆ Forward (1s)</button>
+          <button class="bench-btn" data-cmd="s">⬇ Reverse (1s)</button>
+          <button class="bench-btn" data-cmd="a">⬅ Pivot Left</button>
+          <button class="bench-btn" data-cmd="d">➡ Pivot Right</button>
+          <button class="bench-btn warning" data-cmd="f">💧 Solenoid Pulse (1s)</button>
+          <button class="bench-btn danger" data-cmd="x">🛑 Motor E-Stop</button>
+          <button class="bench-btn" data-cmd="t">📡 Toggle Sensor Stream</button>
+          <button class="bench-btn" data-cmd="sweep">🔄 Turret Sweep Test</button>
+          <button class="bench-btn" data-cmd="sim">🔥 Inject Center Fire</button>
+          <button class="bench-btn" data-cmd="clear">💨 Clear Flame Target</button>
+        </div>
+
+        <div style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 8px;">
+          <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Active Navigation Algorithm:</div>
+          <div style="display: flex; gap: 8px;">
+            <button id="btn-dash-policy-neural" class="bench-btn active" style="flex: 1; background: var(--accent-cyan); color: #000;">🧠 Neural TinyML</button>
+            <button id="btn-dash-policy-sil" class="bench-btn" style="flex: 1;">🤖 Rule-Based SIL</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Row 4: Real-Time Multi-Channel Telemetry Chart -->
+    <section class="chart-card">
+      <div class="chart-header">
+        <span style="font-size: 12px; font-weight: 700; color: #fff; letter-spacing: 0.5px;">📈 Real-Time Telemetry Trend Monitor (Rolling 30s)</span>
+        <div class="chart-pills">
+          <span class="chart-pill active" data-channel="sensors">Ultrasonic Distances</span>
+          <span class="chart-pill" data-channel="pwm">Motor PWMs</span>
+          <span class="chart-pill" data-channel="flame">Flame Confidence</span>
+        </div>
+      </div>
+      <canvas id="dashboard-chart-canvas" width="900" height="140"></canvas>
+    </section>
+  </main>
+
+  <!-- =========================================================================
+       PAGE 2: 3D DIGITAL TWIN SIMULATION SUB-PAGE
+       ========================================================================= -->
+  <div id="page-simulation" class="page-view">
+    <!-- View Mode Switcher Buttons -->
+    <div class="view-modes">
+      <button class="view-btn active" data-view="orbit">🌐 Orbit View</button>
+      <button class="view-btn" data-view="follow">🏎️ Follow Cam</button>
+      <button class="view-btn" data-view="top">📐 Top Down</button>
     </div>
 
-    <!-- Sensor Radar Readouts (Ultrasonic + Flame) -->
-    <div class="panel-card">
-      <div class="panel-title">
-        <span>Ultrasonic HC-SR04</span>
-        <span class="panel-subtitle">Rangefinders</span>
+    <!-- Placement Hint Floating Pill -->
+    <div id="placement-hint" class="placement-hint">Click on the floor to place object</div>
+
+    <!-- Right Sidebar: Controls & Live Hardware Readings -->
+    <aside class="control-sidebar">
+      <!-- Environment & Obstacle Placement Card -->
+      <div class="panel-card">
+        <div class="panel-title">
+          <span>Arena Environment</span>
+          <span class="panel-subtitle">Interactive Control</span>
+        </div>
+        <div class="layout-selector-row" style="margin-bottom: 8px;">
+          <label for="select-arena-layout" style="font-size: 11px; color: var(--text-dim); display: block; margin-bottom: 3px;">Environment Layout:</label>
+          <select id="select-arena-layout" class="layout-dropdown" style="width: 100%; padding: 6px 8px; background: rgba(15, 23, 42, 0.85); border: 1px solid var(--border-color); color: #fff; border-radius: 4px; font-size: 12px; font-family: inherit;">
+            <option value="arena">🏟️ Open Training Arena (Default)</option>
+            <option value="multi-room">🏢 Multi-Room Facility (4 Rooms + Corridor)</option>
+            <option value="maze">🧩 Search & Rescue Labyrinth Maze</option>
+          </select>
+        </div>
+        <div class="tool-grid">
+          <button id="btn-add-fire" class="btn-tool fire">🔥 Add Fire</button>
+          <button id="btn-add-box" class="btn-tool">📦 Add Crate</button>
+          <button id="btn-add-wall" class="btn-tool">🧱 Add Wall</button>
+          <button id="btn-add-cylinder" class="btn-tool">🛢️ Add Barrel</button>
+          <button id="btn-clear-fires" class="btn-tool danger">💨 Clear Fires</button>
+          <button id="btn-randomize-arena" class="btn-tool">🎲 Randomize</button>
+        </div>
+        <button id="btn-reset-robot" class="btn-tool" style="width: 100%; margin-top: 8px;">🔄 Reset Robot to Origin</button>
       </div>
-      <div class="ultrasonic-gauges">
-        <div class="gauge-row">
-          <span class="gauge-name">FRONT:</span>
-          <div class="gauge-bar-container">
-            <div id="gauge-bar-front" class="gauge-bar"></div>
+
+      <!-- Obstacle Sandbox Inspector -->
+      <div id="obstacle-inspector-card" class="panel-card" style="display: none; border-color: rgba(0, 240, 255, 0.4);">
+        <div class="panel-title">
+          <span>Obstacle Inspector</span>
+          <span id="inspector-obs-id" class="panel-subtitle" style="color: var(--accent-cyan);">#1 Box</span>
+        </div>
+        <div class="inspector-controls" style="display: flex; flex-direction: column; gap: 6px; font-size: 11px;">
+          <div style="display: flex; gap: 8px;">
+            <div style="flex: 1;">
+              <label style="color: var(--text-dim); display: block;">Pos X (m):</label>
+              <input type="number" id="inp-obs-x" step="0.1" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+            </div>
+            <div style="flex: 1;">
+              <label style="color: var(--text-dim); display: block;">Pos Z (m):</label>
+              <input type="number" id="inp-obs-z" step="0.1" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+            </div>
           </div>
-          <span id="gauge-txt-front" class="gauge-val">-- cm</span>
-        </div>
 
-        <div class="gauge-row">
-          <span class="gauge-name">LEFT:</span>
-          <div class="gauge-bar-container">
-            <div id="gauge-bar-left" class="gauge-bar"></div>
+          <div id="inspector-box-dims" style="display: flex; gap: 8px;">
+            <div style="flex: 1;">
+              <label style="color: var(--text-dim); display: block;">Width (m):</label>
+              <input type="number" id="inp-obs-w" step="0.1" min="0.2" max="8.0" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+            </div>
+            <div style="flex: 1;">
+              <label style="color: var(--text-dim); display: block;">Depth (m):</label>
+              <input type="number" id="inp-obs-d" step="0.1" min="0.1" max="8.0" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+            </div>
           </div>
-          <span id="gauge-txt-left" class="gauge-val">-- cm</span>
-        </div>
 
-        <div class="gauge-row">
-          <span class="gauge-name">RIGHT:</span>
-          <div class="gauge-bar-container">
-            <div id="gauge-bar-right" class="gauge-bar"></div>
+          <div id="inspector-cyl-dims" style="display: none;">
+            <div>
+              <label style="color: var(--text-dim); display: block;">Radius (m):</label>
+              <input type="number" id="inp-obs-r" step="0.05" min="0.1" max="2.5" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+            </div>
           </div>
-          <span id="gauge-txt-right" class="gauge-val">-- cm</span>
-        </div>
-      </div>
 
-      <!-- Flame & Suppression Actuator Status -->
-      <div class="actuator-indicators">
-        <div class="actuator-box">
-          <div class="actuator-box-label">IR Flame Sensor</div>
-          <div class="actuator-box-val">
-            <span id="flame-indicator-dot" class="indicator-dot"></span>
-            <span id="flame-indicator-txt">CLEAR</span>
+          <div style="display: flex; gap: 8px;">
+            <div style="flex: 1;">
+              <label style="color: var(--text-dim); display: block;">Height (m):</label>
+              <input type="number" id="inp-obs-h" step="0.05" min="0.2" max="2.5" style="width: 100%; padding: 3px 5px; background: #0f172a; border: 1px solid var(--border-color); color: #fff; border-radius: 3px;">
+            </div>
+            <div style="flex: 1;">
+              <label style="color: var(--text-dim); display: block;">Yaw (°): <span id="txt-obs-rot" style="color: var(--accent-cyan);">0°</span></label>
+              <input type="range" id="inp-obs-rot" min="0" max="360" value="0" style="width: 100%;">
+            </div>
           </div>
-        </div>
 
-        <div class="actuator-box">
-          <div class="actuator-box-label">Solenoid Nozzle</div>
-          <div class="actuator-box-val">
-            <span id="solenoid-indicator-dot" class="indicator-dot"></span>
-            <span id="solenoid-indicator-txt">OFF</span>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- 3D Model Swap Card -->
-    <div class="panel-card">
-      <div class="panel-title">
-        <span>Robot 3D Model</span>
-        <span class="panel-subtitle">Custom Asset</span>
-      </div>
-      <input type="file" id="model-file-input" accept=".glb,.gltf,.obj" style="display: none;">
-      <button id="btn-upload-model" class="btn-upload">📁 Load Custom 3D Model (.glb / .gltf)</button>
-      <div class="model-info-banner">
-        Currently displaying procedural CAD-accurate twin. Once you provide your custom 3D model, click above or drop it into <code>simulation/models/</code>.
-      </div>
-    </div>
-  </aside>
-
-  <!-- Bottom Left: Virtual Camera PIP & Teleop Keypad -->
-  <div class="bottom-left-dock">
-    <!-- Camera & Radar Display Stack -->
-    <div class="camera-map-stack">
-      <!-- 2D Ultrasonic Radar / SLAM Projection Map Window -->
-      <div class="ultrasonic-map-card">
-        <div class="map-header">
-          <span>📡 2D RADAR PROJECTION MAP</span>
-          <span style="color: var(--accent-cyan);">ACTIVE (3-BEAM)</span>
-        </div>
-        <div class="map-viewport">
-          <canvas id="map-canvas" width="250" height="150"></canvas>
-        </div>
-      </div>
-
-      <!-- Camera Viewport Card -->
-      <div class="pip-camera-card">
-        <div class="pip-header">
-          <span>📷 VIRTUAL WEBCAM (V4L2)</span>
-          <span style="color: var(--accent-cyan);">640x480</span>
-        </div>
-        <div class="pip-viewport">
-          <canvas id="pip-canvas"></canvas>
-          <div class="pip-crosshair"></div>
-          <div id="pip-bbox" class="pip-bbox">
-            <div class="pip-bbox-label">FIRE</div>
+          <div style="display: flex; gap: 6px; margin-top: 4px;">
+            <button id="btn-obs-duplicate" class="btn-tool" style="flex: 1;">📋 Duplicate</button>
+            <button id="btn-obs-delete" class="btn-tool danger" style="flex: 1;">🗑️ Delete</button>
+            <button id="btn-obs-deselect" class="btn-tool" style="flex: 1;">✕ Close</button>
           </div>
         </div>
       </div>
-    </div>
 
-    <!-- Manual Teleop Control Keypad -->
-    <div class="teleop-pad">
-      <div class="teleop-header">Drive Pad (WASD)</div>
-      <div class="teleop-grid">
-        <button class="key-btn empty"></button>
-        <button class="key-btn" data-key="KeyW" title="Forward">W</button>
-        <button class="key-btn empty"></button>
+      <!-- Digital Twin Synchronization Modes -->
+      <div class="panel-card">
+        <div class="panel-title">
+          <span>Digital Twin Sync Mode</span>
+          <span class="panel-subtitle">Hardware Link</span>
+        </div>
+        <div class="sync-mode-selector">
+          <div class="mode-radio selected" data-mode="neural">
+            <div class="mode-info">
+              <span class="mode-name">🧠 Neural TinyML SIL (Continuous Policy)</span>
+              <span class="mode-desc">Smooth continuous obstacle avoidance & fire homing via MLP navigation model</span>
+            </div>
+          </div>
 
-        <button class="key-btn" data-key="KeyA" title="Pivot Left">A</button>
-        <button class="key-btn" data-key="KeyS" title="Reverse">S</button>
-        <button class="key-btn" data-key="KeyD" title="Pivot Right">D</button>
+          <div class="mode-radio" data-mode="sil">
+            <div class="mode-info">
+              <span class="mode-name">🤖 Rule-Based SIL (Legacy FSM)</span>
+              <span class="mode-desc">Discrete state machine sweep, pivot turns, and timeout recovery</span>
+            </div>
+          </div>
+
+          <div class="mode-radio" data-mode="teleop">
+            <div class="mode-info">
+              <span class="mode-name">🎮 Manual Teleop (WASD)</span>
+              <span class="mode-desc">Direct keyboard or keypad steering & suppression control</span>
+            </div>
+          </div>
+
+          <div class="mode-radio" data-mode="sim2hw">
+            <div class="mode-info">
+              <span class="mode-name">💻 Sim ➔ Physical Hardware</span>
+              <span class="mode-desc">Simulated robot commands drive the physical ESP32 motors & tilt servo</span>
+              <div id="sim2hw-policy-group" class="sim2hw-policy-group" style="display: none; margin-top: 6px; padding: 4px 6px; background: rgba(0,0,0,0.3); border-radius: 4px;">
+                <span style="font-size: 10px; color: var(--text-dim); margin-right: 4px;">Drive Policy:</span>
+                <button class="policy-pill active" data-policy="neural" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: var(--accent-cyan); color: #000; border: none; cursor: pointer;">🧠 Neural TinyML</button>
+                <button class="policy-pill" data-policy="sil" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: rgba(255,255,255,0.1); color: #fff; border: none; cursor: pointer; margin-left: 2px;">🤖 Rule-Based SIL</button>
+                <button class="policy-pill" data-policy="teleop" style="padding: 2px 6px; font-size: 10px; border-radius: 3px; background: rgba(255,255,255,0.1); color: #fff; border: none; cursor: pointer; margin-left: 2px;">🎮 Teleop</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="mode-radio" data-mode="hw2sim">
+            <div class="mode-info">
+              <span class="mode-name">🦾 Physical Hardware ➔ Sim</span>
+              <span class="mode-desc">Real ESP32 telemetry drives the virtual 3D twin in real-time</span>
+            </div>
+          </div>
+        </div>
       </div>
 
-      <div class="teleop-header" style="margin-top: 4px;">Turret & Solenoid</div>
-      <div class="teleop-grid">
-        <button class="key-btn" data-key="KeyU" title="Tilt Up (+10°)">U</button>
-        <button class="key-btn" data-key="KeyH" title="Tilt Home (90°)">H</button>
-        <button class="key-btn" data-key="KeyJ" title="Tilt Down (-10°)">J</button>
+      <!-- Sensor Radar Readouts (Ultrasonic + Flame) -->
+      <div class="panel-card">
+        <div class="panel-title">
+          <span>Ultrasonic HC-SR04</span>
+          <span class="panel-subtitle">Rangefinders</span>
+        </div>
+        <div class="ultrasonic-gauges">
+          <div class="gauge-row">
+            <span class="gauge-name">FRONT:</span>
+            <div class="gauge-bar-container">
+              <div id="gauge-bar-front" class="gauge-bar"></div>
+            </div>
+            <span id="gauge-txt-front" class="gauge-val">-- cm</span>
+          </div>
 
-        <button class="key-btn empty"></button>
-        <button class="key-btn" data-key="KeyF" title="Fire Extinguisher Spray" style="color: var(--accent-cyan); border-color: var(--accent-cyan);">F</button>
-        <button class="key-btn empty"></button>
+          <div class="gauge-row">
+            <span class="gauge-name">LEFT:</span>
+            <div class="gauge-bar-container">
+              <div id="gauge-bar-left" class="gauge-bar"></div>
+            </div>
+            <span id="gauge-txt-left" class="gauge-val">-- cm</span>
+          </div>
+
+          <div class="gauge-row">
+            <span class="gauge-name">RIGHT:</span>
+            <div class="gauge-bar-container">
+              <div id="gauge-bar-right" class="gauge-bar"></div>
+            </div>
+            <span id="gauge-txt-right" class="gauge-val">-- cm</span>
+          </div>
+        </div>
+
+        <!-- Flame & Suppression Actuator Status -->
+        <div class="actuator-indicators">
+          <div class="actuator-box">
+            <div class="actuator-box-label">IR Flame Sensor</div>
+            <div class="actuator-box-val">
+              <span id="flame-indicator-dot" class="indicator-dot"></span>
+              <span id="flame-indicator-txt">CLEAR</span>
+            </div>
+          </div>
+
+          <div class="actuator-box">
+            <div class="actuator-box-label">Solenoid Nozzle</div>
+            <div class="actuator-box-val">
+              <span id="solenoid-indicator-dot" class="indicator-dot"></span>
+              <span id="solenoid-indicator-txt">OFF</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 3D Model Swap Card -->
+      <div class="panel-card">
+        <div class="panel-title">
+          <span>Robot 3D Model</span>
+          <span class="panel-subtitle">Custom Asset</span>
+        </div>
+        <input type="file" id="model-file-input" accept=".glb,.gltf,.obj" style="display: none;">
+        <button id="btn-upload-model" class="btn-upload">📁 Load Custom 3D Model (.glb / .gltf)</button>
+        <div class="model-info-banner">
+          Currently displaying procedural CAD-accurate twin. Once you provide your custom 3D model, click above or drop it into <code>simulation/models/</code>.
+        </div>
+      </div>
+    </aside>
+
+    <!-- Bottom Left: Virtual Camera PIP & Teleop Keypad -->
+    <div class="bottom-left-dock">
+      <!-- Camera & Radar Display Stack -->
+      <div class="camera-map-stack">
+        <!-- 2D Ultrasonic Radar / SLAM Projection Map Window -->
+        <div class="ultrasonic-map-card">
+          <div class="map-header">
+            <span>📡 2D RADAR PROJECTION MAP</span>
+            <span style="color: var(--accent-cyan);">ACTIVE (3-BEAM)</span>
+          </div>
+          <div class="map-viewport">
+            <canvas id="map-canvas" width="250" height="150"></canvas>
+          </div>
+        </div>
+
+        <!-- Camera Viewport Card -->
+        <div class="pip-camera-card">
+          <div class="pip-header">
+            <span>📷 VIRTUAL WEBCAM (V4L2)</span>
+            <span style="color: var(--accent-cyan);">640x480</span>
+          </div>
+          <div class="pip-viewport">
+            <canvas id="pip-canvas"></canvas>
+            <div class="pip-crosshair"></div>
+            <div id="pip-bbox" class="pip-bbox">
+              <div class="pip-bbox-label">FIRE</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Manual Teleop Control Keypad -->
+      <div class="teleop-pad">
+        <div class="teleop-header">Drive Pad (WASD)</div>
+        <div class="teleop-grid">
+          <button class="key-btn empty"></button>
+          <button class="key-btn" data-key="KeyW" title="Forward">W</button>
+          <button class="key-btn empty"></button>
+
+          <button class="key-btn" data-key="KeyA" title="Pivot Left">A</button>
+          <button class="key-btn" data-key="KeyS" title="Reverse">S</button>
+          <button class="key-btn" data-key="KeyD" title="Pivot Right">D</button>
+        </div>
+
+        <div class="teleop-header" style="margin-top: 4px;">Turret & Solenoid</div>
+        <div class="teleop-grid">
+          <button class="key-btn" data-key="KeyU" title="Tilt Up (+10°)">U</button>
+          <button class="key-btn" data-key="KeyH" title="Tilt Home (90°)">H</button>
+          <button class="key-btn" data-key="KeyJ" title="Tilt Down (-10°)">J</button>
+
+          <button class="key-btn empty"></button>
+          <button class="key-btn" data-key="KeyF" title="Fire Extinguisher Spray" style="color: var(--accent-cyan); border-color: var(--accent-cyan);">F</button>
+          <button class="key-btn empty"></button>
+        </div>
       </div>
     </div>
   </div>
 
-  <!-- Application Initialization -->
-  <script src="js/fire_system.js"></script>
-  <script src="js/obstacle_manager.js?v=2"></script>
-  <script src="js/robot_model.js?v=2"></script>
-  <script src="js/sensor_simulator.js?v=3"></script>
-  <script src="js/asset_loader.js?v=2"></script>
-  <script src="js/ultrasonic_mapper.js?v=7"></script>
-  <script src="js/nav_model_runner.js?v=7"></script>
-  <script src="js/sim_world.js?v=2"></script>
-  <script src="js/ui_controller.js?v=7"></script>
+  <!-- Application Scripts -->
+  <script src="js/fire_system.js?v=8"></script>
+  <script src="js/obstacle_manager.js?v=8"></script>
+  <script src="js/robot_model.js?v=8"></script>
+  <script src="js/sensor_simulator.js?v=8"></script>
+  <script src="js/asset_loader.js?v=8"></script>
+  <script src="js/ultrasonic_mapper.js?v=8"></script>
+  <script src="js/nav_model_runner.js?v=8"></script>
+  <script src="js/sim_world.js?v=8"></script>
+  <script src="js/ui_controller.js?v=8"></script>
   <script>
     window.addEventListener('DOMContentLoaded', () => {
       const container = document.getElementById('canvas-container');
@@ -335,7 +621,7 @@
       window.simWorld = simWorld;
       window.uiController = uiController;
 
-      // Render Loop
+      // Render Loop (continues across all page views)
       function animate() {
         requestAnimationFrame(animate);
         simWorld.update();
