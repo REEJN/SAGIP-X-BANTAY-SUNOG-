@@ -46,8 +46,16 @@
         <span id="hud-pwm-txt" class="telemetry-value">L:0 | R:0</span>
       </div>
 
+      <div class="telemetry-item" id="header-hw-pill">
+        <span class="telemetry-label">PHYSICAL HARDWARE</span>
+        <div class="sync-status">
+          <div id="hw-status-dot" class="status-dot"></div>
+          <span id="hw-status-text">DISCONNECTED</span>
+        </div>
+      </div>
+
       <div class="telemetry-item">
-        <span class="telemetry-label">HARDWARE LINK</span>
+        <span class="telemetry-label">BRIDGE LINK</span>
         <div class="sync-status">
           <div id="ws-status-dot" class="status-dot"></div>
           <span id="ws-status-text">STANDALONE (LOCAL)</span>
@@ -69,8 +77,8 @@
           <span class="kpi-label">ROBOT STATUS</span>
           <span class="kpi-icon">🤖</span>
         </div>
-        <div id="kpi-robot-state" class="kpi-val" style="color: var(--accent-cyan);">SEARCHING</div>
-        <div class="kpi-subtext">Mode: <span id="kpi-sync-mode" style="color: #fff;">Neural TinyML SIL</span></div>
+        <div id="kpi-robot-state" class="kpi-val" style="color: var(--accent-red);">OFFLINE (NO HW)</div>
+        <div class="kpi-subtext">Mode: <span id="kpi-sync-mode" style="color: #fff;">Physical Serial</span></div>
       </div>
 
       <div class="kpi-card" id="kpi-card-fire">
@@ -78,7 +86,7 @@
           <span class="kpi-label">FIRE THREAT</span>
           <span class="kpi-icon">🔥</span>
         </div>
-        <div id="kpi-fire-threat" class="kpi-val">CLEAR</div>
+        <div id="kpi-fire-threat" class="kpi-val">STANDBY</div>
         <div class="kpi-subtext">Confidence: <span id="kpi-fire-conf" style="color: #fff;">0%</span> | Standoff: <span id="kpi-standoff-dist" style="color: #fff;">-- m</span></div>
       </div>
 
@@ -88,16 +96,16 @@
           <span class="kpi-icon">💧</span>
         </div>
         <div id="kpi-solenoid-state" class="kpi-val" style="color: var(--accent-green);">OFF</div>
-        <div class="kpi-subtext">Turret Pitch: <span id="kpi-turret-pitch" style="color: #fff;">90°</span> | Optical IR: <span id="kpi-optical-status" style="color: #fff;">Clear</span></div>
+        <div class="kpi-subtext">Turret Pitch: <span id="kpi-turret-pitch" style="color: #fff;">--°</span> | Optical IR: <span id="kpi-optical-status" style="color: #fff;">--</span></div>
       </div>
 
-      <div class="kpi-card">
+      <div class="kpi-card" id="kpi-card-hw">
         <div class="kpi-header">
-          <span class="kpi-label">SERIAL / LINK HEALTH</span>
-          <span class="kpi-icon">⚡</span>
+          <span class="kpi-label">PHYSICAL HARDWARE LINK</span>
+          <span class="kpi-icon">🔌</span>
         </div>
-        <div id="kpi-link-status" class="kpi-val" style="color: var(--accent-yellow);">115200 8-N-1</div>
-        <div class="kpi-subtext">Port: <span id="kpi-com-port" style="color: #fff;">Virtual Loopback</span> | Ping: <span id="kpi-ws-latency" style="color: #fff;">1.8 ms</span></div>
+        <div id="kpi-hw-status" class="kpi-val" style="color: var(--accent-red);">DISCONNECTED</div>
+        <div class="kpi-subtext">Port: <span id="kpi-hw-port" style="color: #fff;">None Detected</span> | Baud: <span id="kpi-hw-baud" style="color: #fff;">115200</span></div>
       </div>
 
       <div class="kpi-card">
@@ -187,6 +195,18 @@
         </div>
       </div>
     </section>
+
+    <!-- Physical Hardware Connection Banner -->
+    <div id="hw-alert-banner" class="hw-banner offline">
+      <div class="hw-banner-icon">⚠️</div>
+      <div class="hw-banner-body">
+        <div id="hw-banner-title" class="hw-banner-title">PHYSICAL HARDWARE DISCONNECTED</div>
+        <div id="hw-banner-sub" class="hw-banner-sub">Dashboard readings are reserved strictly for physical hardware. Connect your ESP32-WROOM via USB/UART (/dev/ttyAMA0 or COM port) to view live sensor telemetry.</div>
+      </div>
+      <div class="hw-banner-actions">
+        <button id="btn-scan-hw" class="btn-tool" style="font-size: 11px; padding: 5px 12px; font-weight: 600;">🔄 Scan Ports</button>
+      </div>
+    </div>
 
     <!-- Row 3: Hardware Telemetry Matrix, Tactical Mini-Map, Bench Controls -->
     <section class="dashboard-grid">
@@ -602,15 +622,15 @@
   </div>
 
   <!-- Application Scripts -->
-  <script src="js/fire_system.js?v=8"></script>
-  <script src="js/obstacle_manager.js?v=8"></script>
-  <script src="js/robot_model.js?v=8"></script>
-  <script src="js/sensor_simulator.js?v=8"></script>
-  <script src="js/asset_loader.js?v=8"></script>
-  <script src="js/ultrasonic_mapper.js?v=8"></script>
-  <script src="js/nav_model_runner.js?v=8"></script>
-  <script src="js/sim_world.js?v=8"></script>
-  <script src="js/ui_controller.js?v=8"></script>
+  <script src="js/fire_system.js?v=9"></script>
+  <script src="js/obstacle_manager.js?v=9"></script>
+  <script src="js/robot_model.js?v=9"></script>
+  <script src="js/sensor_simulator.js?v=9"></script>
+  <script src="js/asset_loader.js?v=9"></script>
+  <script src="js/ultrasonic_mapper.js?v=9"></script>
+  <script src="js/nav_model_runner.js?v=9"></script>
+  <script src="js/sim_world.js?v=9"></script>
+  <script src="js/ui_controller.js?v=9"></script>
   <script>
     window.addEventListener('DOMContentLoaded', () => {
       const container = document.getElementById('canvas-container');
@@ -621,11 +641,18 @@
       window.simWorld = simWorld;
       window.uiController = uiController;
 
-      // Render Loop (continues across all page views)
+      // Render Loop: Simulation physics & 3D rendering are STOPPED when on the Dashboard page!
       function animate() {
         requestAnimationFrame(animate);
-        simWorld.update();
-        uiController.update(simWorld.clock.getDelta());
+        if (uiController.activePage === 'simulation') {
+          // Simulation Sub-Page Active: run 3D Three.js physics and virtual robot navigation
+          simWorld.update();
+          uiController.update(simWorld.clock.getDelta());
+        } else {
+          // Operations Dashboard Active: STOP simulation physics and virtual robot navigation!
+          // Strictly process physical hardware telemetry & update dashboard gauges
+          uiController.updateDashboardOnly(0.016);
+        }
       }
       animate();
     });

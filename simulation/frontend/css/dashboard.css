@@ -1367,3 +1367,105 @@ html, body {
   display: block;
 }
 
+/* =========================================================================
+   PHYSICAL HARDWARE LINK STATUS & BANNERS
+   ========================================================================= */
+#header-hw-pill {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(10, 15, 24, 0.6);
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+#hw-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent-red);
+  box-shadow: 0 0 8px rgba(255, 51, 75, 0.6);
+  transition: all 0.3s ease;
+}
+
+#hw-status-dot.connected {
+  background: var(--accent-green);
+  box-shadow: 0 0 10px rgba(0, 230, 118, 0.9);
+  animation: pulse-green 2s infinite;
+}
+
+@keyframes pulse-green {
+  0% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.25); opacity: 0.8; }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.hw-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  font-family: var(--font-sans);
+  transition: all 0.3s ease;
+}
+
+.hw-banner.offline {
+  background: rgba(255, 51, 75, 0.08);
+  border: 1px solid rgba(255, 51, 75, 0.3);
+  color: #ff9aa2;
+}
+
+.hw-banner.offline .hw-banner-icon {
+  font-size: 20px;
+  margin-right: 12px;
+}
+
+.hw-banner.offline .hw-banner-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--accent-red);
+  text-transform: uppercase;
+}
+
+.hw-banner.offline .hw-banner-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+.hw-banner.online {
+  background: rgba(0, 230, 118, 0.08);
+  border: 1px solid rgba(0, 230, 118, 0.4);
+  color: #b9f6ca;
+}
+
+.hw-banner.online .hw-banner-icon {
+  font-size: 20px;
+  margin-right: 12px;
+}
+
+.hw-banner.online .hw-banner-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  color: var(--accent-green);
+  text-transform: uppercase;
+}
+
+.hw-banner.online .hw-banner-sub {
+  font-size: 11px;
+  color: #d1fae5;
+  margin-top: 2px;
+}
+
+.hw-banner-body {
+  flex: 1;
+}
+
+.hw-banner-actions {
+  display: flex;
+  gap: 8px;
+}
+
+

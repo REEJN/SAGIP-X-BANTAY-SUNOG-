@@ -29,6 +29,7 @@ class SerialConnector:
         self.ser: Optional[serial.Serial] = None
         self.running = False
         self.read_thread: Optional[threading.Thread] = None
+        self.is_physical = False
 
         self.on_telemetry_received: Optional[Callable[[dict], None]] = None
         self.on_log_received: Optional[Callable[[dict], None]] = None
@@ -42,28 +43,76 @@ class SerialConnector:
         ports = serial.tools.list_ports.comports()
         return [p.device for p in ports]
 
+    def is_physical_connected(self) -> bool:
+        """Returns True only when a real physical serial port is open."""
+        return bool(self.ser and self.ser.is_open and self.is_physical)
+
+    def connect_physical(self, port: str) -> bool:
+        """Explicitly connect to a physical serial port."""
+        if not SERIAL_AVAILABLE:
+            return False
+        try:
+            if self.ser and self.ser.is_open:
+                try:
+                    self.ser.close()
+                except Exception:
+                    pass
+            self.ser = serial.Serial(port, self.baudrate, timeout=1.0)
+            self.port = port
+            self.is_physical = True
+            self.mock_mode = False
+            self.running = True
+            self.read_thread = threading.Thread(target=self._read_worker, daemon=True)
+            self.read_thread.start()
+            logger.info(f"[Serial] Connected to PHYSICAL ESP32 on {port} at {self.baudrate} baud.")
+            if self.on_log_received:
+                self.on_log_received({
+                    "source": "ESP32",
+                    "level": "INFO",
+                    "message": f"[HARDWARE LINK] Connected to physical ESP32 on {port} at {self.baudrate} baud",
+                    "timestamp": time.time(),
+                    "is_physical": True
+                })
+            return True
+        except Exception as e:
+            logger.warning(f"[Serial] Could not connect to physical port {port}: {e}")
+            self.ser = None
+            self.is_physical = False
+            return False
+
+    def auto_scan_and_connect(self) -> bool:
+        """Scan available serial ports and attempt connection to physical ESP32."""
+        if self.is_physical_connected():
+            return True
+        if not SERIAL_AVAILABLE:
+            return False
+        ports = serial.tools.list_ports.comports()
+        for p in ports:
+            dev = p.device
+            desc = p.description or ""
+            logger.info(f"[Serial Auto-Scan] Probing port {dev} ({desc})...")
+            if self.connect_physical(dev):
+                return True
+        return False
+
     def connect(self, port: Optional[str] = None) -> bool:
         if port:
             self.port = port
 
+        # If a real port was provided, attempt physical connection first
+        if self.port and not self.port.startswith("MOCK"):
+            if self.connect_physical(self.port):
+                return True
+
         if self.mock_mode or not self.port or self.port.startswith("MOCK"):
             logger.info("[Serial] Connecting in MOCK / Virtual loopback mode.")
             self.running = True
+            self.is_physical = False
             self.read_thread = threading.Thread(target=self._mock_worker, daemon=True)
             self.read_thread.start()
             return True
 
-        try:
-            self.ser = serial.Serial(self.port, self.baudrate, timeout=1.0)
-            self.running = True
-            self.read_thread = threading.Thread(target=self._read_worker, daemon=True)
-            self.read_thread.start()
-            logger.info(f"[Serial] Connected to physical ESP32 on {self.port} at {self.baudrate} baud.")
-            return True
-        except Exception as e:
-            logger.error(f"[Serial] Failed to connect to {self.port}: {e}")
-            self.ser = None
-            return False
+        return False
 
     def disconnect(self):
         self.running = False
@@ -119,6 +168,8 @@ class SerialConnector:
                 if line.startswith("{") and line.endswith("}"):
                     try:
                         data = json.loads(line)
+                        data["is_physical"] = True
+                        data["_is_mock"] = False
                         self.last_telemetry = data
                         if self.on_telemetry_received:
                             self.on_telemetry_received(data)
@@ -127,7 +178,8 @@ class SerialConnector:
                                 "source": "ESP32",
                                 "level": "DEBUG",
                                 "message": f"[TELEMETRY RX] {line}",
-                                "timestamp": time.time()
+                                "timestamp": time.time(),
+                                "is_physical": True
                             })
                     except json.JSONDecodeError:
                         logger.debug(f"[Serial Non-JSON] {line}")
@@ -136,7 +188,8 @@ class SerialConnector:
                                 "source": "ESP32",
                                 "level": "WARN",
                                 "message": f"[CORRUPT] {line}",
-                                "timestamp": time.time()
+                                "timestamp": time.time(),
+                                "is_physical": True
                             })
                 else:
                     logger.debug(f"[ESP32 Debug] {line}")
@@ -146,33 +199,25 @@ class SerialConnector:
                             "source": "ESP32",
                             "level": level,
                             "message": line,
-                            "timestamp": time.time()
+                            "timestamp": time.time(),
+                            "is_physical": True
                         })
             except Exception as e:
-                logger.error(f"[Serial Read Error] {e}")
+                logger.error(f"[Serial Read Error / Disconnected] {e}")
+                self.is_physical = False
                 if self.on_log_received:
                     self.on_log_received({
                         "source": "ESP32",
                         "level": "ERROR",
-                        "message": f"[SERIAL ERROR] {e}",
-                        "timestamp": time.time()
+                        "message": f"[SERIAL DISCONNECTED] {e}",
+                        "timestamp": time.time(),
+                        "is_physical": False
                     })
                 time.sleep(0.5)
 
     def _mock_worker(self):
-        """Simulates periodic ESP32 telemetry & diagnostic logs in mock mode."""
+        """Simulates periodic ESP32 telemetry in mock mode for testing without hardware."""
         uptime = 0
-        step = 0
-        mock_log_templates = [
-            "[FSM] State: SEARCHING | Obstacle clearances: F:120cm L:95cm R:88cm",
-            "[MOTORS] PWM output updated: PWMA:140 PWMB:140 | STBY: HIGH",
-            "[SENSORS] HC-SR04 ping active (3-beam sweep: 40Hz, 10us TRIG pulse)",
-            "[UART] RX Heartbeat OK from Pi (/dev/ttyAMA0 @ 115200 8-N-1)",
-            "[TURRET] Pitch servo holding level at 90.0° (no flame deflection)",
-            "[SOLENOID] Valve safety interlock ENGAGED | State: OFF",
-            "[TINYML] Local inference cycle: 0.12ms (ESP32 240MHz Xtensa Dual-Core)",
-            "[OPTICAL] LM393 IR Flame Sensor digital read: HIGH (Clear, no IR trigger)"
-        ]
 
         while self.running:
             mock_data = {
@@ -186,23 +231,16 @@ class SerialConnector:
                 "left_pwm": 140,
                 "right_pwm": 140,
                 "uptime": uptime,
-                "_is_mock": True
+                "_is_mock": True,
+                "is_physical": False
             }
             self.last_telemetry = mock_data
             if self.on_telemetry_received:
                 self.on_telemetry_received(mock_data)
 
-            # Emit periodic mock log for dashboard console terminal
-            if self.on_log_received and step % 2 == 0:
-                log_idx = (step // 2) % len(mock_log_templates)
-                self.on_log_received({
-                    "source": "ESP32",
-                    "level": "INFO",
-                    "message": mock_log_templates[log_idx],
-                    "timestamp": time.time()
-                })
-
+            # NOTE: NO fake logs are emitted here. Real logs ONLY come from physical serial RX in _read_worker.
             uptime += 500
-            step += 1
             time.sleep(0.5)
+
+
 

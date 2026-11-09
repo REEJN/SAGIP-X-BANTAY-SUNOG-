@@ -64,12 +64,34 @@ class UIController {
     this.chartTimer = 0;
     this.minimapTimer = 0;
 
+    // Physical Hardware Connection Status
+    this.physicalHardwareConnected = false;
+    this.physicalHardwarePort = null;
+    this.physicalHardwareBaud = 115200;
+    this.lastPhysicalTelem = null;
+    this.lastPhysicalTelemTime = 0;
+
     this.bindDomElements();
     this.bindKeyboard();
     this.initWebSocket();
+    this.updatePhysicalHardwareStatus(false, null, 115200);
+    this.renderPiLogs();
+    this.renderEspLogs();
   }
 
   bindDomElements() {
+    // Physical Hardware Port Scan Trigger
+    document.getElementById('btn-scan-hw')?.addEventListener('click', () => {
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        this.socket.send(JSON.stringify({ type: 'SCAN_PORTS' }));
+        const btn = document.getElementById('btn-scan-hw');
+        if (btn) {
+          btn.textContent = '⏳ Scanning...';
+          setTimeout(() => { if (btn) btn.textContent = '🔄 Scan Ports'; }, 1500);
+        }
+      }
+    });
+
     // Navigation Tabs (Main Dashboard vs 3D Simulation Sub-Page)
     document.querySelectorAll('.nav-tab').forEach((tab) => {
       tab.addEventListener('click', () => {
@@ -542,6 +564,10 @@ class UIController {
   }
 
   handleIncomingTelemetry(data) {
+    if (data.type === 'HARDWARE_STATUS') {
+      this.updatePhysicalHardwareStatus(data.connected, data.port, data.baudrate, data.available_ports, data.pi_metrics);
+      return;
+    }
     if (data.type === 'PI_LOG' && data.data) {
       this.appendPiLog(data.data);
       return;
@@ -555,6 +581,18 @@ class UIController {
       return;
     }
 
+    // Physical Hardware Telemetry: ONLY ingest real physical packets for the dashboard
+    if (data.is_physical === true) {
+      this.physicalHardwareConnected = true;
+      this.lastPhysicalTelem = data;
+      this.lastPhysicalTelemTime = Date.now();
+      if (!this.physicalHardwarePort && data.port) {
+        this.physicalHardwarePort = data.port;
+      }
+      this.updatePhysicalHardwareStatus(true, this.physicalHardwarePort || 'COM/UART', this.physicalHardwareBaud);
+      this.updateDashboardHud(0.016, data);
+    }
+
     if (this.syncMode === 'hw2sim') {
       // Physical ESP32 drives the simulated robot!
       if (data.robot_state) this.robotState = data.robot_state;
@@ -563,6 +601,109 @@ class UIController {
       if (data.left_pwm !== undefined && data.right_pwm !== undefined) {
         this.robot.setMotorPwm(data.left_pwm, data.right_pwm);
       }
+    }
+  }
+
+  updatePhysicalHardwareStatus(connected, port, baud, availablePorts, piMetrics) {
+    this.physicalHardwareConnected = !!connected;
+    if (port) this.physicalHardwarePort = port;
+    if (baud) this.physicalHardwareBaud = baud;
+
+    // Header Pill
+    const dot = document.getElementById('hw-status-dot');
+    const label = document.getElementById('hw-status-text');
+    if (dot && label) {
+      if (this.physicalHardwareConnected) {
+        dot.classList.add('connected');
+        label.textContent = `CONNECTED (${this.physicalHardwarePort || 'UART'})`;
+      } else {
+        dot.classList.remove('connected');
+        label.textContent = 'DISCONNECTED';
+      }
+    }
+
+    // KPI Card 4
+    const kpiStatus = document.getElementById('kpi-hw-status');
+    const kpiPort = document.getElementById('kpi-hw-port');
+    const kpiBaud = document.getElementById('kpi-hw-baud');
+    if (kpiStatus) {
+      if (this.physicalHardwareConnected) {
+        kpiStatus.textContent = 'CONNECTED';
+        kpiStatus.style.color = 'var(--accent-green)';
+      } else {
+        kpiStatus.textContent = 'DISCONNECTED';
+        kpiStatus.style.color = 'var(--accent-red)';
+      }
+    }
+    if (kpiPort) {
+      kpiPort.textContent = this.physicalHardwareConnected ? (this.physicalHardwarePort || 'Serial Port') : 'None Detected';
+    }
+    if (kpiBaud) {
+      kpiBaud.textContent = `${this.physicalHardwareBaud || 115200}`;
+    }
+
+    // Hardware Alert Banner
+    const banner = document.getElementById('hw-alert-banner');
+    const bTitle = document.getElementById('hw-banner-title');
+    const bSub = document.getElementById('hw-banner-sub');
+    if (banner && bTitle && bSub) {
+      if (this.physicalHardwareConnected) {
+        banner.className = 'hw-banner online';
+        const icon = banner.querySelector('.hw-banner-icon');
+        if (icon) icon.textContent = '🟢';
+        bTitle.textContent = 'PHYSICAL HARDWARE CONNECTED';
+        bSub.textContent = `Streaming live physical telemetry from ESP32 on ${this.physicalHardwarePort || 'UART'} @ ${this.physicalHardwareBaud} 8-N-1`;
+      } else {
+        banner.className = 'hw-banner offline';
+        const icon = banner.querySelector('.hw-banner-icon');
+        if (icon) icon.textContent = '⚠️';
+        bTitle.textContent = 'PHYSICAL HARDWARE DISCONNECTED';
+        bSub.textContent = 'Dashboard readings are reserved strictly for physical hardware. Connect your ESP32-WROOM via USB/UART (/dev/ttyAMA0 or COM port) to view live sensor telemetry.';
+      }
+    }
+
+    // Real Pi Metrics (gathered from backend, never hardcoded fake static numbers)
+    if (piMetrics) {
+      if (document.getElementById('pi-stat-cpu')) document.getElementById('pi-stat-cpu').textContent = piMetrics.cpu || '--';
+      if (document.getElementById('pi-stat-temp')) document.getElementById('pi-stat-temp').textContent = piMetrics.temp || '--';
+      if (document.getElementById('pi-stat-ram')) document.getElementById('pi-stat-ram').textContent = piMetrics.ram || '--';
+    } else if (!this.physicalHardwareConnected) {
+      if (document.getElementById('pi-stat-cpu')) document.getElementById('pi-stat-cpu').textContent = '--';
+      if (document.getElementById('pi-stat-temp')) document.getElementById('pi-stat-temp').textContent = '--';
+      if (document.getElementById('pi-stat-ram')) document.getElementById('pi-stat-ram').textContent = '--';
+    }
+
+    // ESP32 Console Footer
+    const espSafety = document.getElementById('esp-stat-safety');
+    if (espSafety) {
+      if (this.physicalHardwareConnected) {
+        espSafety.textContent = 'HARDWARE LINKED';
+        espSafety.style.color = 'var(--accent-green)';
+      } else {
+        espSafety.textContent = 'OFFLINE (WAITING)';
+        espSafety.style.color = 'var(--accent-red)';
+      }
+    }
+
+    if (!this.physicalHardwareConnected) {
+      this.updateDashboardHud(0.016, null);
+    }
+  }
+
+  /**
+   * Dedicated Dashboard-only update when on the Operations Dashboard page.
+   * Simulation physics & 3D rendering are completely STOPPED.
+   */
+  updateDashboardOnly(dt) {
+    if (this.physicalHardwareConnected && (Date.now() - this.lastPhysicalTelemTime > 3500)) {
+      this.physicalHardwareConnected = false;
+      this.updatePhysicalHardwareStatus(false, null, 115200);
+    }
+
+    if (this.physicalHardwareConnected && this.lastPhysicalTelem) {
+      this.updateDashboardHud(dt, this.lastPhysicalTelem);
+    } else {
+      this.updateDashboardHud(dt, null);
     }
   }
 
@@ -688,10 +829,9 @@ class UIController {
       }
     }
 
-    // 3. Visualization & Telemetry Broadcast
+    // 3. Visualization & Telemetry Broadcast (Simulation Sub-Page HUD only)
     this.computePredictionPath(telem);
     this.updateHud(telem);
-    this.updateDashboardHud(dt, telem);
     this.broadcastTelemetry(telem);
   }
 
@@ -1796,9 +1936,30 @@ class UIController {
       if (page === 'dashboard') {
         pageDash.classList.add('active');
         pageSim.classList.remove('active');
+        // Halt virtual simulation motors
+        if (this.robot) {
+          this.robot.setMotorPwm(0, 0);
+          this.robot.solenoidActive = false;
+        }
+        if (!this.physicalHardwareConnected) {
+          const topStateBadge = document.getElementById('hud-state-badge');
+          if (topStateBadge) {
+            topStateBadge.textContent = 'OFFLINE (NO HW)';
+            topStateBadge.className = 'state-badge estop';
+          }
+          const topPwm = document.getElementById('hud-pwm-txt');
+          if (topPwm) topPwm.textContent = 'L:0 | R:0';
+        }
       } else {
         pageDash.classList.remove('active');
         pageSim.classList.add('active');
+        // When entering simulation, reset clock delta and trigger canvas resize
+        if (this.sim && this.sim.clock) {
+          this.sim.clock.getDelta();
+        }
+        if (this.sim && this.sim.onWindowResize) {
+          this.sim.onWindowResize();
+        }
       }
     }
   }
@@ -1808,10 +1969,10 @@ class UIController {
     this.robot.solenoidActive = false;
     this.robotState = 'ESTOP';
     this.dispatchBenchCommand('x');
-    this.appendEspLog({
-      source: 'ESP32',
+    this.appendPiLog({
+      source: 'SAFETY',
       level: 'ERROR',
-      message: '[SAFETY] EMERGENCY STOP ACTIVATED! Motors halted, solenoid locked.',
+      message: '[SAFETY] EMERGENCY STOP ACTIVATED! Motors halted, command \'x\' dispatched to serial bridge.',
       timestamp: Date.now() / 1000
     });
   }
@@ -1857,26 +2018,17 @@ class UIController {
   }
 
   appendPiLog(logEntry) {
+    if (!logEntry) return;
     this.piLogs.push(logEntry);
     if (this.piLogs.length > this.maxLogs) this.piLogs.shift();
-
-    // Parse system stats if present
-    const msg = logEntry.message || '';
-    if (msg.includes('Pi 3B CPU:')) {
-      const mCpu = msg.match(/CPU:\s*([\d\.]+%)/);
-      const mTemp = msg.match(/Temp:\s*([\d\.]+°C)/);
-      const mRam = msg.match(/RAM:\s*([^\s\|]+)/);
-      const mFps = msg.match(/@\s*([\d\.]+)fps/);
-      if (mCpu) document.getElementById('pi-stat-cpu').textContent = mCpu[1];
-      if (mTemp) document.getElementById('pi-stat-temp').textContent = mTemp[1];
-      if (mRam) document.getElementById('pi-stat-ram').textContent = mRam[1];
-      if (mFps) document.getElementById('pi-stat-fps').textContent = mFps[1];
-    }
-
     this.renderPiLogs();
   }
 
   appendEspLog(logEntry) {
+    // STRICT: Zero fake logs! Only accept lines from physical ESP32 UART
+    if (!logEntry || logEntry.is_physical === false) {
+      return;
+    }
     this.espLogs.push(logEntry);
     if (this.espLogs.length > this.maxLogs) this.espLogs.shift();
 
@@ -1909,6 +2061,13 @@ class UIController {
       return e.source === filter;
     });
 
+    if (filtered.length === 0) {
+      term.innerHTML = `<div class="log-empty-state" style="color: var(--text-muted); padding: 24px 12px; font-style: italic; font-size: 0.82rem; text-align: center;">
+        🍓 Awaiting live events from Raspberry Pi 3B over Wi-Fi...
+      </div>`;
+      return;
+    }
+
     term.innerHTML = filtered.map((e) => {
       const t = e.timestamp ? new Date(e.timestamp * 1000) : new Date();
       const timeStr = t.toLocaleTimeString();
@@ -1938,18 +2097,25 @@ class UIController {
       return (e.message || '').toLowerCase().includes(filterText);
     });
 
+    if (filtered.length === 0) {
+      term.innerHTML = `<div class="log-empty-state" style="color: var(--text-muted); padding: 24px 12px; font-style: italic; font-size: 0.82rem; text-align: center;">
+        ⚡ Awaiting real UART transmission from physical ESP32...
+      </div>`;
+      return;
+    }
+
     term.innerHTML = filtered.map((e) => {
       const t = e.timestamp ? new Date(e.timestamp * 1000) : new Date();
       const timeStr = t.toLocaleTimeString();
       const msg = e.message || '';
 
-      let badge = 'FSM';
-      let badgeCls = 'fsm';
+      let badge = 'UART';
+      let badgeCls = 'uart';
       if (msg.includes('[MOTORS]')) { badge = 'MOTORS'; badgeCls = 'motors'; }
       else if (msg.includes('[SENSORS]')) { badge = 'SENSORS'; badgeCls = 'vision'; }
-      else if (msg.includes('[UART')) { badge = 'UART'; badgeCls = 'uart'; }
       else if (msg.includes('[SOLENOID]')) { badge = 'SOLENOID'; badgeCls = 'solenoid'; }
       else if (msg.includes('[TINYML]')) { badge = 'TINYML'; badgeCls = 'vision'; }
+      else if (msg.includes('[FSM]')) { badge = 'FSM'; badgeCls = 'fsm'; }
 
       const msgCls = (e.level || 'info').toLowerCase();
       return `<div class="log-entry">
@@ -1974,35 +2140,136 @@ class UIController {
   }
 
   updateDashboardHud(dt, telem) {
+    if (!this.physicalHardwareConnected || !telem) {
+      // -----------------------------------------------------------------------
+      // PHYSICAL HARDWARE OFFLINE / DISCONNECTED STATE:
+      // Zero out all dashboard readings. Never display virtual simulation data!
+      // -----------------------------------------------------------------------
+      const kpiState = document.getElementById('kpi-robot-state');
+      if (kpiState) {
+        kpiState.textContent = 'OFFLINE (NO HW)';
+        kpiState.style.color = 'var(--accent-red)';
+      }
+      const kpiMode = document.getElementById('kpi-sync-mode');
+      if (kpiMode) kpiMode.textContent = 'Physical Serial (Disconnected)';
+
+      if (this.activePage === 'dashboard') {
+        const topStateBadge = document.getElementById('hud-state-badge');
+        if (topStateBadge) {
+          topStateBadge.textContent = 'OFFLINE (NO HW)';
+          topStateBadge.className = 'state-badge estop';
+        }
+        const topPwm = document.getElementById('hud-pwm-txt');
+        if (topPwm) topPwm.textContent = 'L:0 | R:0';
+      }
+
+      const kpiThreat = document.getElementById('kpi-fire-threat');
+      const kpiThreatCard = document.getElementById('kpi-card-fire');
+      if (kpiThreat && kpiThreatCard) {
+        kpiThreat.textContent = 'STANDBY';
+        kpiThreat.style.color = 'var(--text-muted)';
+        kpiThreatCard.className = 'kpi-card';
+      }
+
+      const kpiConf = document.getElementById('kpi-fire-conf');
+      if (kpiConf) kpiConf.textContent = '0%';
+      const kpiDist = document.getElementById('kpi-standoff-dist');
+      if (kpiDist) kpiDist.textContent = '-- m';
+      const kpiSol = document.getElementById('kpi-solenoid-state');
+      if (kpiSol) {
+        kpiSol.textContent = 'OFF';
+        kpiSol.style.color = 'var(--accent-green)';
+      }
+      const kpiPitch = document.getElementById('kpi-turret-pitch');
+      if (kpiPitch) kpiPitch.textContent = '--°';
+      const kpiOpt = document.getElementById('kpi-optical-status');
+      if (kpiOpt) {
+        kpiOpt.textContent = '--';
+        kpiOpt.style.color = '#fff';
+      }
+
+      // Zero out HC-SR04 Dual cm / in gauges
+      ['front', 'left', 'right'].forEach((prefix) => {
+        const bar = document.getElementById(`dash-gauge-${prefix}`);
+        const txtCm = document.getElementById(`dash-gauge-txt-${prefix}`);
+        const txtIn = document.getElementById(`dash-gauge-in-${prefix}`);
+        if (bar && txtCm && txtIn) {
+          bar.style.width = '0%';
+          bar.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
+          txtCm.textContent = '-- cm';
+          txtIn.textContent = '-- in';
+        }
+      });
+
+      // Zero out TB6612 Motor Drive bars
+      ['left', 'right'].forEach((side) => {
+        const bar = document.getElementById(`dash-motor-bar-${side}`);
+        const txt = document.getElementById(`dash-motor-txt-${side}`);
+        if (bar && txt) {
+          bar.style.width = '0%';
+          txt.textContent = '0';
+        }
+      });
+
+      const dFlameDot = document.getElementById('dash-flame-dot');
+      const dFlameTxt = document.getElementById('dash-flame-txt');
+      if (dFlameDot && dFlameTxt) {
+        dFlameDot.classList.remove('active-flame');
+        dFlameTxt.textContent = 'CLEAR';
+        dFlameTxt.style.color = '#fff';
+      }
+
+      const dSolDot = document.getElementById('dash-solenoid-dot');
+      const dSolTxt = document.getElementById('dash-solenoid-txt');
+      if (dSolDot && dSolTxt) {
+        dSolDot.classList.remove('active-solenoid');
+        dSolTxt.textContent = 'OFF';
+        dSolTxt.style.color = '#fff';
+      }
+
+      this.drawTacticalMiniMapOffline();
+      this.renderTelemetryChartOffline();
+      return;
+    }
+
+    // -----------------------------------------------------------------------
+    // PHYSICAL HARDWARE ONLINE: Display Live Real Readings from ESP32
+    // -----------------------------------------------------------------------
+
     // 1. KPI Cards
     const kpiState = document.getElementById('kpi-robot-state');
     if (kpiState) {
-      kpiState.textContent = this.robotState.replace(/_/g, ' ');
+      kpiState.textContent = (telem.robot_state || 'ONLINE').replace(/_/g, ' ');
+      kpiState.style.color = 'var(--accent-cyan)';
     }
 
     const kpiMode = document.getElementById('kpi-sync-mode');
     if (kpiMode) {
-      if (this.syncMode === 'neural') kpiMode.textContent = 'Neural TinyML SIL';
-      else if (this.syncMode === 'sil') kpiMode.textContent = 'Rule-Based SIL (FSM)';
-      else if (this.syncMode === 'teleop') kpiMode.textContent = 'Manual Teleoperation';
-      else if (this.syncMode === 'sim2hw') kpiMode.textContent = `Sim ➔ HW (${this.sim2hwPolicy})`;
-      else kpiMode.textContent = 'Hardware ➔ Sim';
+      kpiMode.textContent = `Physical UART (${this.physicalHardwarePort || 'Serial'})`;
     }
 
-    const target = this.realVisionTarget || telem.target;
-    const hasFire = !!(telem.flame_detected || (target && target.confidence > 0.4));
+    if (this.activePage === 'dashboard') {
+      const topStateBadge = document.getElementById('hud-state-badge');
+      if (topStateBadge) {
+        const st = (telem.robot_state || 'ONLINE').replace(/_/g, ' ');
+        topStateBadge.textContent = st;
+        topStateBadge.className = `state-badge ${(telem.robot_state || 'searching').toLowerCase()}`;
+      }
+      const topPwm = document.getElementById('hud-pwm-txt');
+      if (topPwm) {
+        topPwm.textContent = `L:${telem.left_pwm ?? 0} | R:${telem.right_pwm ?? 0}`;
+      }
+    }
+
+    const hasFire = !!(telem.flame_detected);
     const kpiThreat = document.getElementById('kpi-fire-threat');
     const kpiThreatCard = document.getElementById('kpi-card-fire');
 
     if (kpiThreat && kpiThreatCard) {
-      if (target && target.isConfirmed) {
-        kpiThreat.textContent = '🔥 FIRE CONFIRMED';
+      if (hasFire) {
+        kpiThreat.textContent = '🔥 FLAME DETECTED';
         kpiThreat.style.color = 'var(--accent-red)';
         kpiThreatCard.className = 'kpi-card danger';
-      } else if (hasFire) {
-        kpiThreat.textContent = '⚠️ CANDIDATE';
-        kpiThreat.style.color = 'var(--accent-yellow)';
-        kpiThreatCard.className = 'kpi-card warning';
       } else {
         kpiThreat.textContent = 'CLEAR';
         kpiThreat.style.color = 'var(--accent-green)';
@@ -2012,12 +2279,12 @@ class UIController {
 
     const kpiConf = document.getElementById('kpi-fire-conf');
     if (kpiConf) {
-      kpiConf.textContent = target ? `${Math.round(target.confidence * 100)}%` : '0%';
+      kpiConf.textContent = hasFire ? '100%' : '0%';
     }
 
     const kpiDist = document.getElementById('kpi-standoff-dist');
     if (kpiDist) {
-      const d = (target && target.distanceCm) ? (target.distanceCm / 100.0) : (telem.dist_front / 100.0);
+      const d = (telem.dist_front !== undefined) ? (telem.dist_front / 100.0) : 0;
       kpiDist.textContent = `${d.toFixed(2)} m`;
     }
 
@@ -2047,15 +2314,6 @@ class UIController {
       kpiTime.textContent = `${mm}:${ss}`;
     }
 
-    // Exploration Stats
-    if (this.mapper && this.mapper.explorationGrid) {
-      const grid = this.mapper.explorationGrid;
-      const total = grid.cells ? grid.cells.length : (grid.gridWidth * grid.gridHeight);
-      const pct = Math.min(100, Math.round(((grid.discoveredCount || 0) / (total || 1)) * 100));
-      const kpiCov = document.getElementById('kpi-map-coverage');
-      if (kpiCov) kpiCov.textContent = `${pct}%`;
-    }
-
     // 2. Sensor Gauges (dual cm / in)
     const updateDashGauge = (prefix, valCm) => {
       const bar = document.getElementById(`dash-gauge-${prefix}`);
@@ -2063,14 +2321,15 @@ class UIController {
       const txtIn = document.getElementById(`dash-gauge-in-${prefix}`);
 
       if (bar && txtCm && txtIn) {
-        const pct = Math.min(100, Math.max(0, (valCm / 300.0) * 100));
+        const val = (valCm !== undefined) ? valCm : 0;
+        const pct = Math.min(100, Math.max(0, (val / 300.0) * 100));
         bar.style.width = `${pct}%`;
-        txtCm.textContent = `${valCm.toFixed(1)} cm`;
-        txtIn.textContent = `${(valCm * 0.393701).toFixed(1)} in`;
+        txtCm.textContent = `${val.toFixed(1)} cm`;
+        txtIn.textContent = `${(val * 0.393701).toFixed(1)} in`;
 
-        if (valCm < 25.4) { // < 10 inches
+        if (val < 25.4) { // < 10 inches
           bar.style.backgroundColor = 'var(--accent-red)';
-        } else if (valCm < 45.0) {
+        } else if (val < 45.0) {
           bar.style.backgroundColor = 'var(--accent-yellow)';
         } else {
           bar.style.backgroundColor = 'var(--accent-green)';
@@ -2087,12 +2346,13 @@ class UIController {
       const bar = document.getElementById(`dash-motor-bar-${side}`);
       const txt = document.getElementById(`dash-motor-txt-${side}`);
       if (bar && txt) {
-        const pct = Math.min(100, Math.round((Math.abs(pwm) / 255.0) * 100));
+        const val = pwm || 0;
+        const pct = Math.min(100, Math.round((Math.abs(val) / 255.0) * 100));
         bar.style.width = `${pct}%`;
-        bar.style.background = (pwm >= 0)
+        bar.style.background = (val >= 0)
           ? 'linear-gradient(90deg, var(--accent-cyan), #3b82f6)'
           : 'linear-gradient(90deg, var(--accent-orange), var(--accent-red))';
-        txt.textContent = `${pwm}`;
+        txt.textContent = `${val}`;
       }
     };
 
@@ -2141,16 +2401,80 @@ class UIController {
       this.chartTimer = 0;
       this.telemetryHistory.push({
         time: Date.now(),
-        front: telem.dist_front,
-        left: telem.dist_left,
-        right: telem.dist_right,
-        leftPwm: telem.left_pwm,
-        rightPwm: telem.right_pwm,
-        flameConf: target ? target.confidence * 100 : 0
+        front: telem.dist_front || 0,
+        left: telem.dist_left || 0,
+        right: telem.dist_right || 0,
+        leftPwm: telem.left_pwm || 0,
+        rightPwm: telem.right_pwm || 0,
+        flameConf: telem.flame_detected ? 100 : 0
       });
       if (this.telemetryHistory.length > 60) this.telemetryHistory.shift();
       this.renderTelemetryChart();
     }
+  }
+
+  drawTacticalMiniMapOffline() {
+    const canvas = document.getElementById('dashboard-map-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    ctx.fillStyle = '#05080e';
+    ctx.fillRect(0, 0, w, h);
+
+    // Subtle dark tactical grid lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.lineWidth = 1;
+    for (let x = 0; x < w; x += 25) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    for (let y = 0; y < h; y += 25) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+
+    // Centered tactical warning text
+    ctx.fillStyle = 'rgba(255, 51, 75, 0.75)';
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('PHYSICAL HARDWARE OFFLINE', w / 2, h / 2 - 8);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.font = '9px monospace';
+    ctx.fillText('Waiting for ESP32 UART Telemetry', w / 2, h / 2 + 10);
+  }
+
+  renderTelemetryChartOffline() {
+    const canvas = document.getElementById('dashboard-chart-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    const w = canvas.width;
+    const h = canvas.height;
+
+    ctx.fillStyle = '#04070a';
+    ctx.fillRect(0, 0, w, h);
+
+    // Grid lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.lineWidth = 1;
+    for (let y = 20; y < h; y += 30) {
+      ctx.beginPath();
+      ctx.moveTo(40, y);
+      ctx.lineTo(w - 10, y);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.font = '10px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('WAITING FOR PHYSICAL HARDWARE TELEMETRY STREAM...', w / 2, h / 2);
   }
 
   drawTacticalMiniMap() {
@@ -2184,8 +2508,8 @@ class UIController {
     }
 
     // Draw Robot Position & Heading
-    const rpos = this.robot.position;
-    const ryaw = this.robot.yaw;
+    const rpos = this.robot ? this.robot.position : { x: 0, z: 0 };
+    const ryaw = this.robot ? this.robot.yaw : 0;
     const rx = ((rpos.x + grid.halfSize) / (grid.halfSize * 2)) * w;
     const ry = ((rpos.z + grid.halfSize) / (grid.halfSize * 2)) * h;
 

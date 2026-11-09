@@ -145,37 +145,66 @@ class SyncBridge:
         for d in dead:
             cls.connected_clients.discard(d)
 
+    @classmethod
+    def get_real_metrics(cls) -> dict:
+        """Collects real hardware metrics from the host (Pi) without hardcoded numbers."""
+        metrics = {"cpu": "--", "temp": "--", "ram": "--"}
+        try:
+            import psutil
+            metrics["cpu"] = f"{psutil.cpu_percent(interval=None):.1f}%"
+            mem = psutil.virtual_memory()
+            metrics["ram"] = f"{int(mem.used / 1048576)}MB / {int(mem.total / 1048576)}MB"
+        except Exception:
+            pass
 
-async def periodic_pi_logs():
-    """Periodically emits realistic Raspberry Pi 3B diagnostics and telemetry to the dashboard console."""
-    pi_diagnostics = [
-        ("[System] Pi 3B CPU: 24.8% | Core Temp: 48.2°C | RAM: 312MB / 927MB | V4L2 640x480 @ 29.8fps", "INFO", "SYSTEM"),
-        ("[Vision AI] Detector backend: " + (model_backend if 'model_backend' in globals() else "hsv_fallback") + " | Model inference: ~22ms | Quant: INT8", "INFO", "VISION"),
-        ("[UART0] PL011 hardware serial link active: GPIO 14 (TXD) -> ESP32 RX2 | 115200 8-N-1 | Buffer: OK", "INFO", "UART"),
-        ("[Confirmation] Sliding window 5-frame tracker active | Conf threshold: 0.65 | Temporal filter: PASS", "INFO", "VISION"),
-        ("[Telemetry] Forwarding ESP32 status packets to dashboard WebSocket clients (10 Hz)", "DEBUG", "SYSTEM"),
-    ]
-    step = 0
+        thermal_path = "/sys/class/thermal/thermal_zone0/temp"
+        if os.path.exists(thermal_path):
+            try:
+                with open(thermal_path, "r") as f:
+                    c = int(f.read().strip()) / 1000.0
+                    metrics["temp"] = f"{c:.1f}°C"
+            except Exception:
+                pass
+        return metrics
+
+    @classmethod
+    def get_hardware_status_dict(cls) -> dict:
+        is_phys = cls.serial_conn.is_physical_connected() if cls.serial_conn else False
+        ports = SerialConnector.list_ports()
+        return {
+            "type": "HARDWARE_STATUS",
+            "connected": is_phys,
+            "port": cls.serial_conn.port if (cls.serial_conn and is_phys) else None,
+            "baudrate": cls.serial_conn.baudrate if cls.serial_conn else 115200,
+            "available_ports": [p for p in ports if not p.startswith("MOCK")],
+            "pi_metrics": cls.get_real_metrics()
+        }
+
+    @classmethod
+    async def broadcast_hardware_status(cls):
+        status_pkt = json.dumps(cls.get_hardware_status_dict())
+        await cls.broadcast_ws(status_pkt)
+
+
+async def periodic_hardware_status():
+    """Periodically probes for physical ESP32 connection and broadcasts status."""
     while True:
-        await asyncio.sleep(3.5)
-        if SyncBridge.connected_clients:
-            msg, level, src = pi_diagnostics[step % len(pi_diagnostics)]
-            SyncBridge.emit_pi_log(msg, level=level, source=src)
-            step += 1
+        await asyncio.sleep(2.0)
+        if SyncBridge.serial_conn and not SyncBridge.serial_conn.is_physical_connected():
+            SyncBridge.serial_conn.auto_scan_and_connect()
+        await SyncBridge.broadcast_hardware_status()
 
 
 async def handle_ws(websocket):
     SyncBridge.connected_clients.add(websocket)
-    logger.info(f"[WS] Client connected. Active clients: {len(SyncBridge.connected_clients)}")
+    client_ip = websocket.remote_address[0] if websocket.remote_address else "local"
+    logger.info(f"[WS] Client connected from {client_ip}. Active clients: {len(SyncBridge.connected_clients)}")
 
-    # Send initial welcome log to both consoles
-    SyncBridge.emit_pi_log("[Init] Raspberry Pi 3B Vision & Telemetry Engine Online", "INFO", "SYSTEM")
-    SyncBridge.on_serial_log({
-        "source": "ESP32",
-        "level": "INFO",
-        "message": "[BOOT] ESP32-WROOM-32 FreeRTOS Kernel v10.4.3 initialized",
-        "timestamp": time.time()
-    })
+    # Send initial hardware connection status immediately
+    await websocket.send(json.dumps(SyncBridge.get_hardware_status_dict()))
+
+    # Emit real network connection event to Pi console
+    SyncBridge.emit_pi_log(f"[Wi-Fi] Laptop Dashboard connected from {client_ip}", "INFO", "NETWORK")
 
     try:
         async for message in websocket:
@@ -183,6 +212,22 @@ async def handle_ws(websocket):
                 data = json.loads(message)
                 msg_type = data.get("type", "")
                 sync_mode = data.get("sync_mode", "")
+
+                # -------------------------------------------------------------
+                # Hardware Port Scan / Connect Commands
+                # -------------------------------------------------------------
+                if msg_type == "SCAN_PORTS":
+                    if SyncBridge.serial_conn:
+                        SyncBridge.serial_conn.auto_scan_and_connect()
+                    await SyncBridge.broadcast_hardware_status()
+                    continue
+
+                if msg_type == "CONNECT_PORT":
+                    target_port = data.get("port")
+                    if target_port and SyncBridge.serial_conn:
+                        SyncBridge.serial_conn.connect_physical(target_port)
+                    await SyncBridge.broadcast_hardware_status()
+                    continue
 
                 # -------------------------------------------------------------
                 # Bench Test Command Dispatch
@@ -333,8 +378,8 @@ async def main_async(args):
     )
     http_thread.start()
 
-    # Start periodic Pi logs task
-    asyncio.create_task(periodic_pi_logs())
+    # Start periodic hardware status task
+    asyncio.create_task(periodic_hardware_status())
 
     # Start WebSocket Server
     logger.info(f"[WS] WebSocket server listening on ws://{args.host}:{args.ws_port}/ws/telemetry")
