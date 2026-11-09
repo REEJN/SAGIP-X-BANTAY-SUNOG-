@@ -277,6 +277,6 @@ python run_live_pi.py --host <PI_IP> --user pi
 ## 7. Authors & License
 
 - **Project Lead & Developer**: JENREE DANDAN ([@REEJN](https://github.com/REEJN))
-- **Institution**: Polytechnic University of the Philippines / PNM
+- **Institution**: Computer Studies / Colegio De Montalban
 - **Repository**: [https://github.com/REEJN/SAGIP-X-BANTAY-SUNOG-](https://github.com/REEJN/SAGIP-X-BANTAY-SUNOG-)
 - **License**: MIT License — see [LICENSE](LICENSE) for details.
