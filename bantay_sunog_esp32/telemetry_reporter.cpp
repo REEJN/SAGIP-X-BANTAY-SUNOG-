@@ -26,7 +26,9 @@ void TelemetryReporter::sendTelemetry(const RobotTelemetry& telemetry, bool forc
     doc["right_pwm"] = telemetry.right_motor_pwm;
     doc["uptime"] = telemetry.uptime_ms;
 
-    // Serialize directly to Serial2 as a single line JSON with newline delimiter
+    // Serialize to Serial2 (Raspberry Pi UART) and Serial (USB debug port)
     serializeJson(doc, Serial2);
     Serial2.print('\n');
+    serializeJson(doc, Serial);
+    Serial.print('\n');
 }
