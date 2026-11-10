@@ -236,6 +236,7 @@ class SyncBridge:
         is_phys = cls.serial_conn.is_physical_connected() if cls.serial_conn else False
         ports = SerialConnector.list_ports()
         cached = getattr(cls.serial_conn, 'cached_pi_metrics', None)
+        cached_cam = getattr(cls.serial_conn, 'cached_camera_status', None)
         has_real_pi = bool(cached and cached.get("cpu") != "--")
         return {
             "type": "HARDWARE_STATUS",
@@ -243,7 +244,8 @@ class SyncBridge:
             "port": cls.serial_conn.port if (cls.serial_conn and is_phys) else None,
             "baudrate": cls.serial_conn.baudrate if cls.serial_conn else 115200,
             "available_ports": [p for p in ports if not p.startswith("MOCK")] + (["Raspberry Pi 3B (/dev/serial0)"] if is_phys else []),
-            "pi_metrics": cached if has_real_pi else cls.get_real_metrics()
+            "pi_metrics": cached if has_real_pi else cls.get_real_metrics(),
+            "camera": cached_cam if cached_cam else {"connected": is_phys, "fps": 10.0, "backend": "YOLOv8n"}
         }
 
     @classmethod

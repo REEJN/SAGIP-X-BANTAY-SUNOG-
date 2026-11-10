@@ -39,6 +39,7 @@ class SerialConnector:
         self.sock: Optional[socket.socket] = None
         self.is_wifi_bridge = False
         self.cached_pi_metrics: dict = {}
+        self.cached_camera_status: dict = {}
 
         self.on_telemetry_received: Optional[Callable[[dict], None]] = None
         self.on_log_received: Optional[Callable[[dict], None]] = None
@@ -272,6 +273,8 @@ class SerialConnector:
                         if msg_type == "HARDWARE_STATUS":
                             if "pi_metrics" in data:
                                 self.cached_pi_metrics = data["pi_metrics"]
+                            if "camera" in data:
+                                self.cached_camera_status = data["camera"]
                             if self.on_hardware_status_received:
                                 self.on_hardware_status_received(data)
                             continue
