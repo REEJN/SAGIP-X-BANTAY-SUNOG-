@@ -8,7 +8,7 @@ import paramiko
 PI_HOST = "192.168.137.200"
 PI_USER = "dan"
 PI_PASS = "123"
-LOCAL_DIR = r"C:\Users\danda\Documents\antigravity\proud-babbage\bantay_sunog"
+LOCAL_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bantay_sunog")
 REMOTE_DIR = "/home/dan/bantay_sunog"
 
 def sftp_mkdirs(sftp, remote_path):
@@ -39,11 +39,14 @@ def deploy():
 
     total_files = 0
     for root, dirs, files in os.walk(LOCAL_DIR):
+        dirs[:] = [d for d in dirs if d not in ('__pycache__', '.git', '.pytest_cache')]
         rel_path = os.path.relpath(root, LOCAL_DIR)
         remote_root = REMOTE_DIR if rel_path == "." else os.path.join(REMOTE_DIR, rel_path).replace("\\", "/")
         sftp_mkdirs(sftp, remote_root)
 
         for f in files:
+            if f.endswith(('.pyc', '.pyo')):
+                continue
             local_file = os.path.join(root, f)
             remote_file = os.path.join(remote_root, f).replace("\\", "/")
             print(f"Uploading: {rel_path}/{f} -> {remote_file}")
