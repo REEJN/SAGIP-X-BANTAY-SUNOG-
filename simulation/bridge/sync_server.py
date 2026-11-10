@@ -89,6 +89,56 @@ class StaticHttpHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps({"ports": ports}).encode("utf-8"))
             return
 
+        elif self.path in ("/video_feed", "/api/video_feed"):
+            # Proxy live MJPEG stream from Raspberry Pi 3B (192.168.137.200:5000)
+            import urllib.request
+            pi_stream_url = "http://192.168.137.200:5000/video_feed"
+            try:
+                req = urllib.request.Request(pi_stream_url)
+                upstream = urllib.request.urlopen(req, timeout=3.0)
+                self.send_response(200)
+                self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Expires", "0")
+                self.end_headers()
+                while True:
+                    chunk = upstream.read(4096)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+                return
+            except Exception:
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(b"Pi Video Stream Unavailable")
+                return
+
+        elif self.path in ("/snapshot", "/api/snapshot"):
+            import urllib.request
+            pi_snap_url = "http://192.168.137.200:5000/snapshot"
+            try:
+                upstream = urllib.request.urlopen(pi_snap_url, timeout=2.0)
+                data = upstream.read()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            except Exception:
+                self.send_response(503)
+                self.send_header("Content-Type", "text/plain")
+                self.send_header("Access-Control-Allow-Origin", "*")
+                self.end_headers()
+                self.wfile.write(b"No snapshot available")
+                return
+
         super().do_GET()
 
     def log_message(self, format, *args):

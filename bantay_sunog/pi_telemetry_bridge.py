@@ -1,32 +1,88 @@
 """
-BANTAY-SUNOG Raspberry Pi 3B Telemetry & UART Bridge Service
-============================================================
+BANTAY-SUNOG Raspberry Pi 3B Telemetry, Camera & UART Bridge Service
+=====================================================================
 Runs on Raspberry Pi 3B (192.168.137.200).
 - Opens hardware UART /dev/serial0 (connected to ESP32 RX/TX pins) at 115200 baud
 - Gathers real Pi system metrics (CPU, thermal sensor temp, RAM)
 - Serves a lightweight TCP stream server on port 8888 for the laptop dashboard
+- Acquires real-time frames from physical USB webcam (/dev/video0) at 640x360
+- Runs Vision AI / HSV flame detector with bounding box targeting
+- Serves high-speed MJPEG video stream on port 5000 (/video_feed)
 - Enables bidirectional communication: ESP32 <-> Pi <-> Wi-Fi <-> Laptop Dashboard
 """
 
 import asyncio
 import json
+import logging
 import os
 import sys
+import threading
 import time
-from typing import Set
+from typing import Optional, Set
+
+# Suppress flask / werkzeug verbose request logs
+logging.getLogger("werkzeug").setLevel(logging.ERROR)
+
+# Ensure parent path is in sys.path
+_CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+_PARENT_DIR = os.path.dirname(_CURRENT_DIR)
+for p in [_CURRENT_DIR, _PARENT_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
+
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+try:
+    from flask import Flask, Response, jsonify
+    _HAS_FLASK = True
+except ImportError:
+    _HAS_FLASK = False
 
 try:
     import serial
 except ImportError:
     serial = None
 
+# Optional fire detector import
+fire_detector = None
+confirmation_tracker = None
+try:
+    from bantay_sunog.detection.model_loader import load_model
+    from bantay_sunog.detection.fire_detector import FireDetector
+    from bantay_sunog.detection.confirmation import ConfirmationTracker
+    model_info = load_model("hsv_fallback")
+    fire_detector = FireDetector(model_info)
+    confirmation_tracker = ConfirmationTracker()
+    print("[Vision AI] Loaded HSV fallback fire detector.")
+except Exception as e:
+    print(f"[Vision AI] Running without detector model: {e}")
+
 UART_PORT = os.environ.get("BANTAY_UART_PORT", "/dev/serial0")
 UART_BAUD = int(os.environ.get("BANTAY_UART_BAUD", "115200"))
 TCP_PORT = int(os.environ.get("BANTAY_TCP_PORT", "8888"))
+VIDEO_PORT = int(os.environ.get("BANTAY_VIDEO_PORT", "5000"))
 
 connected_clients: Set[asyncio.StreamWriter] = set()
 ser_conn = None
 last_esp_packet_time = 0.0
+
+# -----------------------------------------------------------------------------
+# Video Streaming & Camera State
+# -----------------------------------------------------------------------------
+latest_jpeg_frame: Optional[bytes] = None
+latest_frame_lock = threading.Lock()
+camera_status = {
+    "connected": False,
+    "fps": 0.0,
+    "device": "/dev/video0",
+    "resolution": "640x360",
+    "flame_detected": False,
+    "target": None,
+    "backend": "HSV_Fallback"
+}
 
 
 def get_pi_metrics():
@@ -65,6 +121,163 @@ async def broadcast_to_clients(data_str: str):
         connected_clients.discard(d)
 
 
+def camera_capture_worker():
+    """Continuously captures frames from USB webcam, runs vision AI, and updates JPEG buffer."""
+    global latest_jpeg_frame, camera_status
+    if cv2 is None:
+        print("[CAM] OpenCV not installed, camera capture disabled.")
+        return
+
+    print("[CAM] Starting background USB webcam acquisition worker...")
+    cap = None
+    frame_count = 0
+    fps_start = time.time()
+    last_detected = False
+
+    while True:
+        try:
+            # 1. Open camera if not opened
+            if cap is None or not cap.isOpened():
+                camera_status["connected"] = False
+                for dev in ["/dev/video0", 0, "/dev/video1", 1]:
+                    try:
+                        c = cv2.VideoCapture(dev, cv2.CAP_V4L2)
+                        if c.isOpened():
+                            c.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"YUYV"))
+                            c.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                            c.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
+                            # Probe test read
+                            test_ret, _ = c.read()
+                            if test_ret:
+                                cap = c
+                                camera_status["connected"] = True
+                                camera_status["device"] = str(dev)
+                                camera_status["resolution"] = "640x360"
+                                print(f"[CAM] Successfully opened USB webcam on {dev} at 640x360")
+                                break
+                            else:
+                                c.release()
+                    except Exception:
+                        continue
+
+                if cap is None or not cap.isOpened():
+                    time.sleep(2.0)
+                    continue
+
+            # 2. Read frame
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                camera_status["connected"] = False
+                try:
+                    cap.release()
+                except Exception:
+                    pass
+                cap = None
+                time.sleep(1.0)
+                continue
+
+            # 3. FPS calculation
+            frame_count += 1
+            elapsed = time.time() - fps_start
+            if elapsed >= 1.0:
+                camera_status["fps"] = round(frame_count / elapsed, 1)
+                frame_count = 0
+                fps_start = time.time()
+
+            # 4. Fire Detection (if model loaded)
+            best_target = None
+            if fire_detector is not None:
+                try:
+                    detections = fire_detector.detect(frame)
+                    if confirmation_tracker is not None:
+                        state, _, best_det = confirmation_tracker.update(detections)
+                        if best_det is not None:
+                            best_target = {
+                                "x": round(best_det.normalized_x, 3),
+                                "y": round(best_det.normalized_y, 3),
+                                "confidence": round(best_det.confidence, 2),
+                                "bbox": [best_det.x, best_det.y, best_det.width, best_det.height]
+                            }
+                            camera_status["flame_detected"] = True
+                            camera_status["target"] = best_target
+                        else:
+                            camera_status["flame_detected"] = False
+                            camera_status["target"] = None
+                except Exception:
+                    pass
+
+            # 5. Draw detection overlay onto live frame if flame detected
+            if best_target and "bbox" in best_target:
+                bx, by, bw, bh = best_target["bbox"]
+                cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
+                tag = f"FLAME {int(best_target['confidence'] * 100)}%"
+                cv2.putText(frame, tag, (bx, max(18, by - 6)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                cx = bx + bw // 2
+                cy = by + bh // 2
+                cv2.drawMarker(frame, (cx, cy), (0, 0, 255), cv2.MARKER_CROSS, 16, 1)
+
+            # 6. Compress to JPEG
+            encode_param = [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+            success, buffer = cv2.imencode(".jpg", frame, encode_param)
+            if success:
+                with latest_frame_lock:
+                    latest_jpeg_frame = buffer.tobytes()
+
+        except Exception as e:
+            time.sleep(1.0)
+
+
+def create_flask_app():
+    """Create Flask application for MJPEG video streaming."""
+    app = Flask("bantay_video_stream")
+
+    @app.route("/")
+    def index():
+        return "BANTAY-SUNOG Video Streamer Online at /video_feed"
+
+    @app.route("/video_feed")
+    def video_feed():
+        def generate():
+            while True:
+                with latest_frame_lock:
+                    jpeg = latest_jpeg_frame
+                if jpeg is not None:
+                    yield (
+                        b"--frame\r\n"
+                        b"Content-Type: image/jpeg\r\n\r\n" + jpeg + b"\r\n"
+                    )
+                time.sleep(0.04)  # ~25 FPS
+
+        response = Response(generate(), mimetype="multipart/x-mixed-replace; boundary=frame")
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
+
+    @app.route("/snapshot")
+    def snapshot():
+        with latest_frame_lock:
+            jpeg = latest_jpeg_frame
+        if jpeg is not None:
+            response = Response(jpeg, mimetype="image/jpeg")
+            response.headers["Access-Control-Allow-Origin"] = "*"
+            return response
+        return ("No frame captured yet", 404)
+
+    @app.route("/api/status")
+    def api_status():
+        data = {
+            "camera": camera_status,
+            "metrics": get_pi_metrics()
+        }
+        response = jsonify(data)
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        return response
+
+    return app
+
+
 async def uart_reader_task():
     global ser_conn, last_esp_packet_time
     print(f"[UART] Opening {UART_PORT} at {UART_BAUD} baud...")
@@ -74,7 +287,6 @@ async def uart_reader_task():
                 ser_conn = serial.Serial(UART_PORT, UART_BAUD, timeout=1.0)
                 ser_conn.reset_input_buffer()
                 print(f"[UART] Connected to physical ESP32 on {UART_PORT}!")
-                # Announce to clients
                 log_pkt = json.dumps({
                     "type": "PI_LOG",
                     "data": {
@@ -86,15 +298,27 @@ async def uart_reader_task():
                 })
                 await broadcast_to_clients(log_pkt)
 
-            # Read line asynchronously in executor
             loop = asyncio.get_running_loop()
             line = await loop.run_in_executor(None, ser_conn.readline)
             if line:
                 decoded = line.decode("utf-8", errors="replace").strip()
-                if decoded.startswith("{") and decoded.endswith("}"):
+                if decoded:
                     last_esp_packet_time = time.time()
-                    # Broadcast raw ESP32 packet
-                    await broadcast_to_clients(decoded)
+                    if decoded.startswith("{") and decoded.endswith("}"):
+                        await broadcast_to_clients(decoded)
+                    else:
+                        # Forward as ESP32 serial console log
+                        esp_log = json.dumps({
+                            "type": "ESP32_LOG",
+                            "data": {
+                                "source": "ESP32",
+                                "level": "INFO",
+                                "message": decoded,
+                                "timestamp": time.time(),
+                                "is_physical": True
+                            }
+                        })
+                        await broadcast_to_clients(esp_log)
         except Exception as e:
             print(f"[UART] Error on {UART_PORT}: {e}")
             if ser_conn:
@@ -120,6 +344,7 @@ async def periodic_status_task():
             "baudrate": UART_BAUD,
             "available_ports": [UART_PORT],
             "pi_metrics": metrics,
+            "camera": camera_status,
             "source": "PI_WIFI_BRIDGE",
             "esp_alive": esp_alive,
             "last_esp_packet_age": round(now - last_esp_packet_time, 2) if last_esp_packet_time > 0 else 999.0
@@ -132,7 +357,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     print(f"[TCP] Dashboard client connected from {peer}")
     connected_clients.add(writer)
 
-    # Send initial welcome and status immediately
     welcome_log = json.dumps({
         "type": "PI_LOG",
         "data": {
@@ -145,7 +369,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     writer.write((welcome_log + "\n").encode("utf-8"))
     await writer.drain()
 
-    # Immediate status
     metrics = get_pi_metrics()
     esp_alive = bool(ser_conn and ser_conn.is_open and (time.time() - last_esp_packet_time < 3.0))
     status_pkt = json.dumps({
@@ -155,6 +378,7 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         "baudrate": UART_BAUD,
         "available_ports": [UART_PORT],
         "pi_metrics": metrics,
+        "camera": camera_status,
         "source": "PI_WIFI_BRIDGE"
     })
     writer.write((status_pkt + "\n").encode("utf-8"))
@@ -165,7 +389,6 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             line = await reader.readline()
             if not line:
                 break
-            # Handle incoming commands from dashboard to ESP32
             cmd_str = line.decode("utf-8", errors="replace").strip()
             if cmd_str and ser_conn and ser_conn.is_open:
                 try:
@@ -186,10 +409,27 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
 
 
 async def main():
+    # 1. Start background camera acquisition worker
+    cam_thread = threading.Thread(target=camera_capture_worker, daemon=True, name="CameraCapture")
+    cam_thread.start()
+
+    # 2. Start background Flask video streaming server on port 5000
+    if _HAS_FLASK:
+        flask_app = create_flask_app()
+        flask_thread = threading.Thread(
+            target=lambda: flask_app.run(host="0.0.0.0", port=VIDEO_PORT, threaded=True, use_reloader=False),
+            daemon=True,
+            name="VideoStreamer"
+        )
+        flask_thread.start()
+        print(f"[HTTP] Video streaming server active on http://0.0.0.0:{VIDEO_PORT}/video_feed")
+
+    # 3. Start TCP bridge on port 8888
     server = await asyncio.start_server(handle_client, "0.0.0.0", TCP_PORT)
     print(f"============================================================")
-    print(f"   BANTAY-SUNOG Raspberry Pi 3B Wi-Fi Telemetry Bridge")
+    print(f"   BANTAY-SUNOG Raspberry Pi 3B Telemetry & Video Bridge")
     print(f"   Listening on TCP 0.0.0.0:{TCP_PORT}")
+    print(f"   MJPEG Stream: http://0.0.0.0:{VIDEO_PORT}/video_feed")
     print(f"   Hardware UART: {UART_PORT} @ {UART_BAUD} baud")
     print(f"============================================================")
 

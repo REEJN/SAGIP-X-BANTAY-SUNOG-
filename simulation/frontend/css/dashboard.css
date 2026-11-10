@@ -995,10 +995,64 @@ html, body {
 }
 
 #dashboard-cam-canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.dash-camera-stream-img {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  z-index: 1;
+  background: #020408;
+}
+
+.dash-cam-offline-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(3, 6, 12, 0.88);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 3;
+  pointer-events: none;
+  text-align: center;
+  padding: 15px;
+}
+
+.dash-cam-offline-icon {
+  font-size: 32px;
+  margin-bottom: 8px;
+  opacity: 0.8;
+}
+
+.dash-cam-offline-title {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent-yellow);
+  letter-spacing: 0.5px;
+}
+
+.dash-cam-offline-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  margin-top: 4px;
 }
 
 .vision-hud-overlay {
@@ -1009,6 +1063,7 @@ html, body {
   height: 100%;
   pointer-events: none;
   font-family: var(--font-mono);
+  z-index: 4;
 }
 
 .vision-crosshair {

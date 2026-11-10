@@ -569,6 +569,17 @@ class UIController {
 
   handleIncomingTelemetry(data) {
     if (data.type === 'HARDWARE_STATUS') {
+      if (data.camera) {
+        this.latestCameraStatus = data.camera;
+        const fpsEl = document.getElementById('dash-cam-fps');
+        if (fpsEl && data.camera.fps !== undefined) fpsEl.textContent = data.camera.fps.toFixed(1);
+        const modelEl = document.getElementById('dash-cam-model');
+        if (modelEl && data.camera.backend) modelEl.textContent = data.camera.backend;
+        const banner = document.getElementById('dash-cam-offline-banner');
+        if (banner) {
+          banner.style.display = data.camera.connected ? 'none' : 'flex';
+        }
+      }
       this.updatePhysicalHardwareStatus(data.connected, data.port, data.baudrate, data.available_ports, data.pi_metrics);
       return;
     }
@@ -754,20 +765,48 @@ class UIController {
     const w = canvas.width;
     const h = canvas.height;
 
-    // 1. Draw camera feed from virtual camera or dark optical canvas
-    if (this.sensors && this.sensors.pipCanvas) {
-      try {
-        if (this.syncMode !== 'dashboard' || !this.physicalHardwareConnected) {
-          this.sensors.renderPip();
-        }
-        ctx.drawImage(this.sensors.pipCanvas, 0, 0, w, h);
-      } catch (e) {
+    // 1. Manage Live Physical Webcam Stream vs Virtual Simulation Camera
+    const streamImg = document.getElementById('dashboard-cam-mjpeg');
+    const offlineBanner = document.getElementById('dash-cam-offline-banner');
+    const srcBadge = document.getElementById('vision-cam-source-badge');
+
+    if (this.syncMode === 'dashboard') {
+      if (streamImg) {
+        streamImg.style.display = 'block';
+        // Clear canvas so the underlying hardware video stream shows through
+        ctx.clearRect(0, 0, w, h);
+      } else {
         ctx.fillStyle = '#060a12';
         ctx.fillRect(0, 0, w, h);
       }
+      if (srcBadge) {
+        const isCamActive = streamImg && streamImg.complete && streamImg.naturalWidth > 0;
+        srcBadge.textContent = isCamActive ? '🔴 LIVE WEBCAM' : 'SEARCHING WEBCAM';
+        srcBadge.style.color = isCamActive ? 'var(--accent-green)' : 'var(--accent-yellow)';
+        if (offlineBanner) {
+          offlineBanner.style.display = isCamActive ? 'none' : 'flex';
+        }
+      }
     } else {
-      ctx.fillStyle = '#060a12';
-      ctx.fillRect(0, 0, w, h);
+      // In Simulation View Mode: Hide physical stream image and draw 3D pipCanvas
+      if (streamImg) streamImg.style.display = 'none';
+      if (offlineBanner) offlineBanner.style.display = 'none';
+      if (srcBadge) {
+        srcBadge.textContent = '🎮 VIRTUAL SIM';
+        srcBadge.style.color = 'var(--accent-cyan)';
+      }
+      if (this.sensors && this.sensors.pipCanvas) {
+        try {
+          this.sensors.renderPip();
+          ctx.drawImage(this.sensors.pipCanvas, 0, 0, w, h);
+        } catch (e) {
+          ctx.fillStyle = '#060a12';
+          ctx.fillRect(0, 0, w, h);
+        }
+      } else {
+        ctx.fillStyle = '#060a12';
+        ctx.fillRect(0, 0, w, h);
+      }
     }
 
     // 2. Optical Reticle & Pitch Scale
@@ -775,7 +814,7 @@ class UIController {
     const pitchOffset = ((tilt - 90) / 45) * (h * 0.22);
 
     // Center pitch line
-    ctx.strokeStyle = 'rgba(0, 210, 255, 0.25)';
+    ctx.strokeStyle = 'rgba(0, 210, 255, 0.35)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(w * 0.35, h * 0.5 - pitchOffset);
@@ -784,7 +823,7 @@ class UIController {
 
     // Corner brackets
     const bLen = 22;
-    ctx.strokeStyle = 'rgba(0, 210, 255, 0.45)';
+    ctx.strokeStyle = 'rgba(0, 210, 255, 0.55)';
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(14, 14 + bLen); ctx.lineTo(14, 14); ctx.lineTo(14 + bLen, 14); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(w - 14 - bLen, 14); ctx.lineTo(w - 14, 14); ctx.lineTo(w - 14, 14 + bLen); ctx.stroke();
@@ -803,7 +842,10 @@ class UIController {
     const bboxEl = document.getElementById('dash-vision-bbox');
     const confTagEl = document.getElementById('dash-vision-bbox-conf');
 
-    const hasFlame = telem ? !!telem.flame_detected : (this.realVisionTarget && this.realVisionTarget.isConfirmed);
+    const camTarget = this.latestCameraStatus ? this.latestCameraStatus.target : null;
+    const hasFlame = (telem ? !!telem.flame_detected : false) || 
+                     (this.latestCameraStatus ? !!this.latestCameraStatus.flame_detected : false) ||
+                     (this.realVisionTarget && this.realVisionTarget.isConfirmed);
     const standoffM = telem ? (telem.dist_front / 100).toFixed(2) : '--';
 
     if (pitchEl) pitchEl.textContent = `${Math.round(tilt)}°`;
@@ -812,7 +854,10 @@ class UIController {
       irEl.style.color = hasFlame ? 'var(--accent-red)' : 'var(--accent-green)';
     }
     if (standoffEl) standoffEl.textContent = standoffM !== '--' ? `${standoffM} m` : '-- m';
-    if (confEl) confEl.textContent = hasFlame ? '100%' : '0%';
+    if (confEl) {
+      const confVal = camTarget ? Math.round(camTarget.confidence * 100) : (hasFlame ? 100 : 0);
+      confEl.textContent = `${confVal}%`;
+    }
 
     if (hasFlame) {
       if (badgeEl) {
@@ -832,14 +877,24 @@ class UIController {
 
       if (bboxEl) {
         bboxEl.style.display = 'block';
-        const boxW = Math.max(90, Math.min(180, (w * 0.28)));
-        const boxH = Math.max(100, Math.min(210, (h * 0.44)));
-        const boxL = (w - boxW) / 2;
-        const boxT = Math.max(10, Math.min(h - boxH - 10, (h - boxH) / 2 - pitchOffset * 0.6));
-        bboxEl.style.left = `${(boxL / w) * 100}%`;
-        bboxEl.style.top = `${(boxT / h) * 100}%`;
-        bboxEl.style.width = `${(boxW / w) * 100}%`;
-        bboxEl.style.height = `${(boxH / h) * 100}%`;
+        if (camTarget && camTarget.bbox) {
+          const [bx, by, bw, bh] = camTarget.bbox;
+          bboxEl.style.left = `${(bx / 640) * 100}%`;
+          bboxEl.style.top = `${(by / 360) * 100}%`;
+          bboxEl.style.width = `${(bw / 640) * 100}%`;
+          bboxEl.style.height = `${(bh / 360) * 100}%`;
+          if (confTagEl) confTagEl.textContent = `${Math.round(camTarget.confidence * 100)}%`;
+        } else {
+          const boxW = Math.max(90, Math.min(180, (w * 0.28)));
+          const boxH = Math.max(100, Math.min(210, (h * 0.44)));
+          const boxL = (w - boxW) / 2;
+          const boxT = Math.max(10, Math.min(h - boxH - 10, (h - boxH) / 2 - pitchOffset * 0.6));
+          bboxEl.style.left = `${(boxL / w) * 100}%`;
+          bboxEl.style.top = `${(boxT / h) * 100}%`;
+          bboxEl.style.width = `${(boxW / w) * 100}%`;
+          bboxEl.style.height = `${(boxH / h) * 100}%`;
+          if (confTagEl) confTagEl.textContent = '100%';
+        }
       }
       if (confTagEl) confTagEl.textContent = '100%';
     } else {

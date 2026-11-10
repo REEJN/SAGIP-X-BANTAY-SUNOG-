@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BANTAY-SUNOG: Operations Dashboard & 3D Digital Twin</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=9">
+  <link rel="stylesheet" href="css/dashboard.css?v=10">
   <!-- Three.js & Controls from trusted CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -131,12 +131,19 @@
             </div>
           </div>
           <div class="terminal-actions">
+            <span id="vision-cam-source-badge" class="dash-badge" style="background: rgba(0, 230, 118, 0.15); color: var(--accent-green); margin-right: 6px;">🔴 LIVE WEBCAM</span>
             <span id="vision-state-badge" class="dash-badge" style="background: rgba(0, 210, 255, 0.15); color: var(--accent-cyan);">PATROL SCAN</span>
           </div>
         </div>
 
         <div class="vision-viewport-container">
+          <img id="dashboard-cam-mjpeg" class="dash-camera-stream-img" src="/video_feed" alt="Raspberry Pi USB Webcam Live Feed" crossorigin="anonymous" />
           <canvas id="dashboard-cam-canvas" width="640" height="360"></canvas>
+          <div id="dash-cam-offline-banner" class="dash-cam-offline-overlay" style="display: none;">
+            <div class="dash-cam-offline-icon">📷</div>
+            <div class="dash-cam-offline-title">CONNECTING TO USB WEBCAM...</div>
+            <div class="dash-cam-offline-sub">Awaiting video stream from Raspberry Pi 3B (/dev/video0)</div>
+          </div>
           <div class="vision-hud-overlay">
             <!-- Optical Reticle / Crosshair -->
             <div id="dash-vision-crosshair" class="vision-crosshair"></div>
