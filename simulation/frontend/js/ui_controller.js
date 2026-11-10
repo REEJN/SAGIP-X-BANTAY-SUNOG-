@@ -71,6 +71,10 @@ class UIController {
     this.lastPhysicalTelem = null;
     this.lastPhysicalTelemTime = 0;
 
+    if (typeof history !== 'undefined' && 'scrollRestoration' in history) {
+      history.scrollRestoration = 'manual';
+    }
+
     this.bindDomElements();
     this.bindKeyboard();
     this.initWebSocket();
@@ -583,14 +587,14 @@ class UIController {
 
     // Physical Hardware Telemetry: ONLY ingest real physical packets for the dashboard
     if (data.is_physical === true) {
-      this.physicalHardwareConnected = true;
       this.lastPhysicalTelem = data;
       this.lastPhysicalTelemTime = Date.now();
-      if (!this.physicalHardwarePort && data.port) {
-        this.physicalHardwarePort = data.port;
+      if (!this.physicalHardwareConnected) {
+        this.physicalHardwareConnected = true;
+        this.updatePhysicalHardwareStatus(true, this.physicalHardwarePort || data.port, this.physicalHardwareBaud);
       }
-      this.updatePhysicalHardwareStatus(true, this.physicalHardwarePort || 'COM/UART', this.physicalHardwareBaud);
       this.updateDashboardHud(0.016, data);
+      this.updateDashboardCamera(0.016, data);
     }
 
     if (this.syncMode === 'hw2sim') {
@@ -606,14 +610,21 @@ class UIController {
 
   updatePhysicalHardwareStatus(connected, port, baud, availablePorts, piMetrics) {
     this.physicalHardwareConnected = !!connected;
-    if (port) this.physicalHardwarePort = port;
+    if (port) {
+      // Normalize port name to eliminate twitching from alternating port strings
+      if (port.includes('192.168.137') || port.includes('Wi-Fi')) {
+        this.physicalHardwarePort = 'Raspberry Pi 3B (192.168.137.200 -> /dev/serial0)';
+      } else {
+        this.physicalHardwarePort = port;
+      }
+    }
     if (baud) this.physicalHardwareBaud = baud;
 
+    const isWifiBridge = this.physicalHardwarePort && (this.physicalHardwarePort.includes('Wi-Fi') || this.physicalHardwarePort.includes('192.168.137'));
+    
     // Header Pill
     const dot = document.getElementById('hw-status-dot');
     const label = document.getElementById('hw-status-text');
-    const isWifiBridge = this.physicalHardwarePort && (this.physicalHardwarePort.includes('Wi-Fi') || this.physicalHardwarePort.includes('192.168.137'));
-    
     if (dot && label) {
       if (this.physicalHardwareConnected) {
         dot.classList.add('connected');
@@ -630,7 +641,7 @@ class UIController {
     const kpiBaud = document.getElementById('kpi-hw-baud');
     if (kpiStatus) {
       if (this.physicalHardwareConnected) {
-        kpiStatus.textContent = isWifiBridge ? 'WI-FI & UART LINKED' : 'CONNECTED';
+        kpiStatus.textContent = isWifiBridge ? 'CONNECTED (WI-FI)' : 'CONNECTED';
         kpiStatus.style.color = 'var(--accent-green)';
       } else {
         kpiStatus.textContent = 'DISCONNECTED';
@@ -639,7 +650,7 @@ class UIController {
     }
     if (kpiPort) {
       if (this.physicalHardwareConnected) {
-        kpiPort.textContent = isWifiBridge ? 'Pi 3B (192.168.137.200 -> /dev/serial0)' : (this.physicalHardwarePort || 'Serial Port');
+        kpiPort.textContent = isWifiBridge ? 'Pi 3B (192.168.137.200)' : (this.physicalHardwarePort || 'Serial Port');
       } else {
         kpiPort.textContent = 'None Detected';
       }
@@ -659,7 +670,7 @@ class UIController {
         if (icon) icon.textContent = '🟢';
         bTitle.textContent = isWifiBridge ? 'ESP32 & RASPBERRY PI 3B LINKED OVER WI-FI' : 'PHYSICAL HARDWARE CONNECTED';
         bSub.textContent = isWifiBridge 
-          ? 'Streaming live physical telemetry: ESP32 [UART Pins 8/10] ➔ Raspberry Pi 3B [/dev/serial0] ➔ Laptop Wi-Fi [192.168.137.200:8888]'
+          ? 'Streaming live physical telemetry: ESP32 [UART Pins 8/10] ➔ Raspberry Pi 3B [/dev/serial0] ➔ Laptop Wi-Fi [192.168.137.200]'
           : `Streaming live physical telemetry from ESP32 on ${this.physicalHardwarePort || 'UART'} @ ${this.physicalHardwareBaud} 8-N-1`;
       } else {
         banner.className = 'hw-banner offline';
@@ -707,6 +718,7 @@ class UIController {
 
     if (!this.physicalHardwareConnected) {
       this.updateDashboardHud(0.016, null);
+      this.updateDashboardCamera(0.016, null);
     }
   }
 
@@ -722,8 +734,130 @@ class UIController {
 
     if (this.physicalHardwareConnected && this.lastPhysicalTelem) {
       this.updateDashboardHud(dt, this.lastPhysicalTelem);
+      this.updateDashboardCamera(dt, this.lastPhysicalTelem);
     } else {
       this.updateDashboardHud(dt, null);
+      this.updateDashboardCamera(dt, null);
+    }
+  }
+
+  /**
+   * Renders the Vision AI Camera Feed on the Operations Dashboard.
+   * Displays optical reticle, live pitch indicators, flame bounding box, and target lock HUD.
+   */
+  updateDashboardCamera(dt, telem) {
+    const canvas = document.getElementById('dashboard-cam-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // 1. Draw camera feed from virtual camera or dark optical canvas
+    if (this.sensors && this.sensors.pipCanvas) {
+      try {
+        if (this.syncMode !== 'dashboard' || !this.physicalHardwareConnected) {
+          this.sensors.renderPip();
+        }
+        ctx.drawImage(this.sensors.pipCanvas, 0, 0, w, h);
+      } catch (e) {
+        ctx.fillStyle = '#060a12';
+        ctx.fillRect(0, 0, w, h);
+      }
+    } else {
+      ctx.fillStyle = '#060a12';
+      ctx.fillRect(0, 0, w, h);
+    }
+
+    // 2. Optical Reticle & Pitch Scale
+    const tilt = (telem && telem.tilt_angle !== undefined) ? telem.tilt_angle : (this.robot ? this.robot.currentTiltDeg : 90);
+    const pitchOffset = ((tilt - 90) / 45) * (h * 0.22);
+
+    // Center pitch line
+    ctx.strokeStyle = 'rgba(0, 210, 255, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(w * 0.35, h * 0.5 - pitchOffset);
+    ctx.lineTo(w * 0.65, h * 0.5 - pitchOffset);
+    ctx.stroke();
+
+    // Corner brackets
+    const bLen = 22;
+    ctx.strokeStyle = 'rgba(0, 210, 255, 0.45)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(14, 14 + bLen); ctx.lineTo(14, 14); ctx.lineTo(14 + bLen, 14); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(w - 14 - bLen, 14); ctx.lineTo(w - 14, 14); ctx.lineTo(w - 14, 14 + bLen); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(14, h - 14 - bLen); ctx.lineTo(14, h - 14); ctx.lineTo(14 + bLen, h - 14); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(w - 14 - bLen, h - 14); ctx.lineTo(w - 14, h - 14); ctx.lineTo(w - 14, h - 14 - bLen); ctx.stroke();
+
+    // 3. Update HUD Stamps & Target Lock Overlays
+    const pitchEl = document.getElementById('dash-hud-pitch');
+    const irEl = document.getElementById('dash-hud-ir');
+    const standoffEl = document.getElementById('dash-hud-standoff');
+    const confEl = document.getElementById('dash-hud-conf');
+    const statusLineEl = document.getElementById('dash-hud-status-line');
+    const badgeEl = document.getElementById('vision-state-badge');
+    const lockPill = document.getElementById('dash-cam-lock-pill');
+    const crosshairEl = document.getElementById('dash-vision-crosshair');
+    const bboxEl = document.getElementById('dash-vision-bbox');
+    const confTagEl = document.getElementById('dash-vision-bbox-conf');
+
+    const hasFlame = telem ? !!telem.flame_detected : (this.realVisionTarget && this.realVisionTarget.isConfirmed);
+    const standoffM = telem ? (telem.dist_front / 100).toFixed(2) : '--';
+
+    if (pitchEl) pitchEl.textContent = `${Math.round(tilt)}°`;
+    if (irEl) {
+      irEl.textContent = hasFlame ? 'DETECTED' : 'CLEAR';
+      irEl.style.color = hasFlame ? 'var(--accent-red)' : 'var(--accent-green)';
+    }
+    if (standoffEl) standoffEl.textContent = standoffM !== '--' ? `${standoffM} m` : '-- m';
+    if (confEl) confEl.textContent = hasFlame ? '100%' : '0%';
+
+    if (hasFlame) {
+      if (badgeEl) {
+        badgeEl.textContent = '🔥 FLAME LOCK';
+        badgeEl.style.background = 'rgba(255, 51, 75, 0.2)';
+        badgeEl.style.color = 'var(--accent-red)';
+      }
+      if (lockPill) {
+        lockPill.textContent = 'TARGET LOCKED';
+        lockPill.style.color = 'var(--accent-red)';
+      }
+      if (statusLineEl) {
+        statusLineEl.textContent = 'OPTICAL TARGET LOCKED [FIRE SUPPRESSION READY]';
+        statusLineEl.style.color = 'var(--accent-red)';
+      }
+      if (crosshairEl) crosshairEl.classList.add('locked');
+
+      if (bboxEl) {
+        bboxEl.style.display = 'block';
+        const boxW = Math.max(90, Math.min(180, (w * 0.28)));
+        const boxH = Math.max(100, Math.min(210, (h * 0.44)));
+        const boxL = (w - boxW) / 2;
+        const boxT = Math.max(10, Math.min(h - boxH - 10, (h - boxH) / 2 - pitchOffset * 0.6));
+        bboxEl.style.left = `${(boxL / w) * 100}%`;
+        bboxEl.style.top = `${(boxT / h) * 100}%`;
+        bboxEl.style.width = `${(boxW / w) * 100}%`;
+        bboxEl.style.height = `${(boxH / h) * 100}%`;
+      }
+      if (confTagEl) confTagEl.textContent = '100%';
+    } else {
+      if (badgeEl) {
+        badgeEl.textContent = 'PATROL SCAN';
+        badgeEl.style.background = 'rgba(0, 210, 255, 0.15)';
+        badgeEl.style.color = 'var(--accent-cyan)';
+      }
+      if (lockPill) {
+        lockPill.textContent = 'SEARCHING';
+        lockPill.style.color = 'var(--accent-yellow)';
+      }
+      if (statusLineEl) {
+        statusLineEl.textContent = 'AI VISION SENSOR: OPTICAL SCANNING SECTOR';
+        statusLineEl.style.color = 'var(--accent-cyan)';
+      }
+      if (crosshairEl) crosshairEl.classList.remove('locked');
+      if (bboxEl) bboxEl.style.display = 'none';
     }
   }
 
@@ -1955,6 +2089,7 @@ class UIController {
     if (pageDash && pageSim) {
       if (page === 'dashboard') {
         pageDash.classList.add('active');
+        pageDash.scrollTop = 0;
         pageSim.classList.remove('active');
         // Halt virtual simulation motors
         if (this.robot) {

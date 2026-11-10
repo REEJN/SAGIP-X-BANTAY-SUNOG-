@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BANTAY-SUNOG: Operations Dashboard & 3D Digital Twin</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=8">
+  <link rel="stylesheet" href="css/dashboard.css?v=9">
   <!-- Three.js & Controls from trusted CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -118,8 +118,58 @@
       </div>
     </section>
 
-    <!-- Row 2: Dual Hardware Console Terminals (Side-by-Side) -->
+    <!-- Row 2: Vision AI Camera Window & Dual Hardware Consoles -->
     <section class="consoles-grid">
+      <!-- Vision AI Camera Window (Live Optical Target View) -->
+      <div class="terminal-card vision-card">
+        <div class="terminal-header">
+          <div class="terminal-title-area">
+            <div id="vision-cam-led" class="terminal-led" style="background: var(--accent-cyan); box-shadow: 0 0 8px var(--accent-cyan);"></div>
+            <div>
+              <div class="terminal-title">📷 Vision AI Camera Feed</div>
+              <div class="terminal-subtitle">Raspberry Pi Optical Detection & Target Lock (640x360)</div>
+            </div>
+          </div>
+          <div class="terminal-actions">
+            <span id="vision-state-badge" class="dash-badge" style="background: rgba(0, 210, 255, 0.15); color: var(--accent-cyan);">PATROL SCAN</span>
+          </div>
+        </div>
+
+        <div class="vision-viewport-container">
+          <canvas id="dashboard-cam-canvas" width="640" height="360"></canvas>
+          <div class="vision-hud-overlay">
+            <!-- Optical Reticle / Crosshair -->
+            <div id="dash-vision-crosshair" class="vision-crosshair"></div>
+            <!-- Dynamic Flame Bounding Box -->
+            <div id="dash-vision-bbox" class="vision-bbox" style="display: none;">
+              <span class="vision-bbox-tag">🔥 FLAME LOCK</span>
+              <span id="dash-vision-bbox-conf" class="vision-bbox-conf">98%</span>
+            </div>
+            <!-- HUD Information Stamps -->
+            <div class="vision-hud-top-left">
+              <div>GIMBAL PITCH: <span id="dash-hud-pitch">90°</span></div>
+              <div>OPTICAL IR: <span id="dash-hud-ir">CLEAR</span></div>
+            </div>
+            <div class="vision-hud-top-right">
+              <div>STANDOFF: <span id="dash-hud-standoff">-- m</span></div>
+              <div>CONFIDENCE: <span id="dash-hud-conf">0%</span></div>
+            </div>
+            <div class="vision-hud-bottom">
+              <span id="dash-hud-status-line">AI VISION SENSOR: LIVE STREAM ACTIVE</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="terminal-footer">
+          <div class="footer-pill-row">
+            <div class="footer-pill">FPS: <span id="dash-cam-fps">30.0</span></div>
+            <div class="footer-pill">Infer: <span id="dash-cam-latency">0.2ms</span></div>
+            <div class="footer-pill">Model: <span id="dash-cam-model" style="color: var(--accent-cyan);">MobileNetV2</span></div>
+          </div>
+          <div class="footer-pill">Lock: <span id="dash-cam-lock-pill" style="color: var(--accent-yellow);">SEARCHING</span></div>
+        </div>
+      </div>
+
       <!-- Raspberry Pi 3B Console Card -->
       <div class="terminal-card pi-card">
         <div class="terminal-header">

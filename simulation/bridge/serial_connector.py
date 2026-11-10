@@ -112,7 +112,7 @@ class SerialConnector:
             self.is_physical = True
             self.mock_mode = False
             self.running = True
-            self.port = f"Raspberry Pi 3B Wi-Fi ({target_host}:{target_port} -> /dev/serial0)"
+            self.port = f"Raspberry Pi 3B ({target_host} -> /dev/serial0)"
             
             self.read_thread = threading.Thread(target=self._wifi_read_worker, daemon=True)
             self.read_thread.start()
@@ -121,7 +121,7 @@ class SerialConnector:
                 self.on_log_received({
                     "source": "ESP32",
                     "level": "INFO",
-                    "message": f"[WI-FI BRIDGE LINK] Connected to ESP32 via Raspberry Pi 3B ({target_host}:{target_port} -> /dev/serial0)",
+                    "message": f"[WI-FI BRIDGE LINK] Connected to ESP32 via Raspberry Pi 3B ({target_host} -> /dev/serial0)",
                     "timestamp": time.time(),
                     "is_physical": True
                 })
