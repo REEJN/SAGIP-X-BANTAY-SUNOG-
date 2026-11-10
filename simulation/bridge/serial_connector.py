@@ -6,6 +6,8 @@ Includes automatic COM port scanning, telemetry ingestion, and mock fallback.
 
 import json
 import logging
+import os
+import socket
 import threading
 import time
 from typing import Callable, List, Optional
@@ -31,8 +33,17 @@ class SerialConnector:
         self.read_thread: Optional[threading.Thread] = None
         self.is_physical = False
 
+        # Wi-Fi Bridge to Raspberry Pi 3B (/dev/serial0)
+        self.wifi_host = os.environ.get("BANTAY_PI_HOST", "192.168.137.200")
+        self.wifi_port = int(os.environ.get("BANTAY_PI_PORT", "8888"))
+        self.sock: Optional[socket.socket] = None
+        self.is_wifi_bridge = False
+        self.cached_pi_metrics: dict = {}
+
         self.on_telemetry_received: Optional[Callable[[dict], None]] = None
         self.on_log_received: Optional[Callable[[dict], None]] = None
+        self.on_hardware_status_received: Optional[Callable[[dict], None]] = None
+        self.on_pi_log_received: Optional[Callable[[dict], None]] = None
         self.last_telemetry: dict = {}
 
     @staticmethod
@@ -44,7 +55,9 @@ class SerialConnector:
         return [p.device for p in ports]
 
     def is_physical_connected(self) -> bool:
-        """Returns True only when a real physical serial port is open."""
+        """Returns True when either a physical COM port or Pi Wi-Fi bridge is active."""
+        if self.is_wifi_bridge and self.sock and self.is_physical:
+            return True
         return bool(self.ser and self.ser.is_open and self.is_physical)
 
     def connect_physical(self, port: str) -> bool:
@@ -80,29 +93,86 @@ class SerialConnector:
             self.is_physical = False
             return False
 
+    def connect_wifi_bridge(self, host: Optional[str] = None, port: Optional[int] = None) -> bool:
+        """Connect to Raspberry Pi 3B UART Wi-Fi Bridge stream."""
+        target_host = host or self.wifi_host
+        target_port = port or self.wifi_port
+        try:
+            if self.sock:
+                try:
+                    self.sock.close()
+                except Exception:
+                    pass
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(2.5)
+            s.connect((target_host, target_port))
+            s.settimeout(None)
+            self.sock = s
+            self.is_wifi_bridge = True
+            self.is_physical = True
+            self.mock_mode = False
+            self.running = True
+            self.port = f"Raspberry Pi 3B Wi-Fi ({target_host}:{target_port} -> /dev/serial0)"
+            
+            self.read_thread = threading.Thread(target=self._wifi_read_worker, daemon=True)
+            self.read_thread.start()
+            logger.info(f"[Serial/Wi-Fi] Connected to Raspberry Pi 3B Wi-Fi Bridge at {target_host}:{target_port}")
+            if self.on_log_received:
+                self.on_log_received({
+                    "source": "ESP32",
+                    "level": "INFO",
+                    "message": f"[WI-FI BRIDGE LINK] Connected to ESP32 via Raspberry Pi 3B ({target_host}:{target_port} -> /dev/serial0)",
+                    "timestamp": time.time(),
+                    "is_physical": True
+                })
+            return True
+        except Exception as e:
+            logger.debug(f"[Serial/Wi-Fi] Could not connect to Pi Wi-Fi Bridge at {target_host}:{target_port}: {e}")
+            self.sock = None
+            self.is_wifi_bridge = False
+            return False
+
     def auto_scan_and_connect(self) -> bool:
-        """Scan available serial ports and attempt connection to physical ESP32."""
+        """Scan available connections: first probe Pi Wi-Fi bridge, then local USB COM ports."""
         if self.is_physical_connected():
             return True
-        if not SERIAL_AVAILABLE:
-            return False
-        ports = serial.tools.list_ports.comports()
-        for p in ports:
-            dev = p.device
-            desc = p.description or ""
-            logger.info(f"[Serial Auto-Scan] Probing port {dev} ({desc})...")
-            if self.connect_physical(dev):
-                return True
+
+        # 1. Probe Raspberry Pi 3B Wi-Fi bridge first (primary link without ESP32 ports on laptop)
+        if self.connect_wifi_bridge():
+            return True
+
+        # 2. Probe local USB serial ports
+        if SERIAL_AVAILABLE:
+            ports = serial.tools.list_ports.comports()
+            for p in ports:
+                dev = p.device
+                desc = p.description or ""
+                logger.info(f"[Serial Auto-Scan] Probing local port {dev} ({desc})...")
+                if self.connect_physical(dev):
+                    return True
         return False
 
     def connect(self, port: Optional[str] = None) -> bool:
         if port:
             self.port = port
 
-        # If a real port was provided, attempt physical connection first
+        # Check for Wi-Fi bridge specified in port parameter
+        if self.port and (":" in self.port or "192.168" in self.port or "wifi" in self.port.lower()):
+            clean = self.port.replace("http://", "").replace("ws://", "")
+            parts = clean.split(":")
+            h = parts[0]
+            p = int(parts[1]) if len(parts) > 1 else self.wifi_port
+            if self.connect_wifi_bridge(h, p):
+                return True
+
+        # If a real local COM port was provided, attempt physical connection
         if self.port and not self.port.startswith("MOCK"):
             if self.connect_physical(self.port):
                 return True
+
+        # Auto probe Wi-Fi bridge first before falling back to mock
+        if self.auto_scan_and_connect():
+            return True
 
         if self.mock_mode or not self.port or self.port.startswith("MOCK"):
             logger.info("[Serial] Connecting in MOCK / Virtual loopback mode.")
@@ -116,6 +186,13 @@ class SerialConnector:
 
     def disconnect(self):
         self.running = False
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
+            self.is_wifi_bridge = False
         if self.ser and self.ser.is_open:
             try:
                 self.ser.close()
@@ -125,7 +202,24 @@ class SerialConnector:
         logger.info("[Serial] Disconnected.")
 
     def send_line(self, data_str: str) -> bool:
-        """Send raw string line with newline delimiter to ESP32."""
+        """Send raw string line to ESP32 via Wi-Fi bridge or local serial."""
+        if self.is_wifi_bridge and self.sock:
+            try:
+                payload = (data_str.strip() + "\n").encode("utf-8")
+                self.sock.sendall(payload)
+                if self.on_log_received:
+                    self.on_log_received({
+                        "source": "ESP32",
+                        "level": "INFO",
+                        "message": f"[WI-FI TX -> ESP32] {data_str.strip()}",
+                        "timestamp": time.time(),
+                        "is_physical": True
+                    })
+                return True
+            except Exception as e:
+                logger.error(f"[Wi-Fi Bridge TX Error] {e}")
+                return False
+
         if self.mock_mode or not self.ser:
             logger.debug(f"[Serial MOCK TX] -> {data_str}")
             if self.on_log_received:
@@ -152,6 +246,81 @@ class SerialConnector:
         except Exception as e:
             logger.error(f"[Serial TX Error] {e}")
             return False
+
+    def _wifi_read_worker(self):
+        """Worker thread to read live telemetry & Pi metrics over Wi-Fi bridge TCP socket."""
+        try:
+            f = self.sock.makefile('r', encoding='utf-8', errors='replace')
+        except Exception as e:
+            logger.error(f"[Wi-Fi Bridge] Cannot makefile on socket: {e}")
+            return
+
+        while self.running and self.sock:
+            try:
+                line = f.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if not line:
+                    continue
+
+                if line.startswith("{") and line.endswith("}"):
+                    try:
+                        data = json.loads(line)
+                        msg_type = data.get("type", "")
+
+                        if msg_type == "HARDWARE_STATUS":
+                            if "pi_metrics" in data:
+                                self.cached_pi_metrics = data["pi_metrics"]
+                            if self.on_hardware_status_received:
+                                self.on_hardware_status_received(data)
+                            continue
+
+                        if msg_type == "PI_LOG" and "data" in data:
+                            if self.on_pi_log_received:
+                                self.on_pi_log_received(data["data"])
+                            continue
+
+                        # Raw ESP32 telemetry packet
+                        if "robot_state" in data or "dist_front" in data:
+                            data["is_physical"] = True
+                            data["_is_mock"] = False
+                            data["port"] = self.port
+                            self.last_telemetry = data
+                            if self.on_telemetry_received:
+                                self.on_telemetry_received(data)
+                            if self.on_log_received:
+                                self.on_log_received({
+                                    "source": "ESP32",
+                                    "level": "DEBUG",
+                                    "message": f"[TELEMETRY RX] {line}",
+                                    "timestamp": time.time(),
+                                    "is_physical": True
+                                })
+                    except json.JSONDecodeError:
+                        pass
+                else:
+                    if self.on_log_received:
+                        self.on_log_received({
+                            "source": "ESP32",
+                            "level": "INFO",
+                            "message": line,
+                            "timestamp": time.time(),
+                            "is_physical": True
+                        })
+            except Exception as e:
+                logger.warning(f"[Wi-Fi Bridge Read Error] {e}")
+                break
+
+        logger.info("[Wi-Fi Bridge] Connection closed.")
+        self.is_physical = False
+        self.is_wifi_bridge = False
+        if self.sock:
+            try:
+                self.sock.close()
+            except Exception:
+                pass
+            self.sock = None
 
     def send_json(self, payload: dict) -> bool:
         """Serialize and send structured JSON message."""

@@ -44,7 +44,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically open web browser")
     args = parser.parse_args()
 
-    serial_status = f"Connecting to {args.serial_port}" if args.serial_port else "Mock Loopback (Autonomous SIL)"
+    serial_status = f"Connecting to {args.serial_port}" if args.serial_port else "Auto-Scanning: Raspberry Pi 3B Wi-Fi Bridge (192.168.137.200:8888 -> ESP32 /dev/serial0)"
     print(BANNER.format(port=args.port, ws_port=args.ws_port, serial_status=serial_status))
 
     if not args.no_browser:

@@ -612,10 +612,12 @@ class UIController {
     // Header Pill
     const dot = document.getElementById('hw-status-dot');
     const label = document.getElementById('hw-status-text');
+    const isWifiBridge = this.physicalHardwarePort && (this.physicalHardwarePort.includes('Wi-Fi') || this.physicalHardwarePort.includes('192.168.137'));
+    
     if (dot && label) {
       if (this.physicalHardwareConnected) {
         dot.classList.add('connected');
-        label.textContent = `CONNECTED (${this.physicalHardwarePort || 'UART'})`;
+        label.textContent = isWifiBridge ? 'CONNECTED (Pi Wi-Fi -> /dev/serial0)' : `CONNECTED (${this.physicalHardwarePort || 'UART'})`;
       } else {
         dot.classList.remove('connected');
         label.textContent = 'DISCONNECTED';
@@ -628,7 +630,7 @@ class UIController {
     const kpiBaud = document.getElementById('kpi-hw-baud');
     if (kpiStatus) {
       if (this.physicalHardwareConnected) {
-        kpiStatus.textContent = 'CONNECTED';
+        kpiStatus.textContent = isWifiBridge ? 'WI-FI & UART LINKED' : 'CONNECTED';
         kpiStatus.style.color = 'var(--accent-green)';
       } else {
         kpiStatus.textContent = 'DISCONNECTED';
@@ -636,10 +638,14 @@ class UIController {
       }
     }
     if (kpiPort) {
-      kpiPort.textContent = this.physicalHardwareConnected ? (this.physicalHardwarePort || 'Serial Port') : 'None Detected';
+      if (this.physicalHardwareConnected) {
+        kpiPort.textContent = isWifiBridge ? 'Pi 3B (192.168.137.200 -> /dev/serial0)' : (this.physicalHardwarePort || 'Serial Port');
+      } else {
+        kpiPort.textContent = 'None Detected';
+      }
     }
     if (kpiBaud) {
-      kpiBaud.textContent = `${this.physicalHardwareBaud || 115200}`;
+      kpiBaud.textContent = isWifiBridge ? '115200 (UART RX/TX)' : `${this.physicalHardwareBaud || 115200}`;
     }
 
     // Hardware Alert Banner
@@ -651,8 +657,10 @@ class UIController {
         banner.className = 'hw-banner online';
         const icon = banner.querySelector('.hw-banner-icon');
         if (icon) icon.textContent = '🟢';
-        bTitle.textContent = 'PHYSICAL HARDWARE CONNECTED';
-        bSub.textContent = `Streaming live physical telemetry from ESP32 on ${this.physicalHardwarePort || 'UART'} @ ${this.physicalHardwareBaud} 8-N-1`;
+        bTitle.textContent = isWifiBridge ? 'ESP32 & RASPBERRY PI 3B LINKED OVER WI-FI' : 'PHYSICAL HARDWARE CONNECTED';
+        bSub.textContent = isWifiBridge 
+          ? 'Streaming live physical telemetry: ESP32 [UART Pins 8/10] ➔ Raspberry Pi 3B [/dev/serial0] ➔ Laptop Wi-Fi [192.168.137.200:8888]'
+          : `Streaming live physical telemetry from ESP32 on ${this.physicalHardwarePort || 'UART'} @ ${this.physicalHardwareBaud} 8-N-1`;
       } else {
         banner.className = 'hw-banner offline';
         const icon = banner.querySelector('.hw-banner-icon');
@@ -671,6 +679,18 @@ class UIController {
       if (document.getElementById('pi-stat-cpu')) document.getElementById('pi-stat-cpu').textContent = '--';
       if (document.getElementById('pi-stat-temp')) document.getElementById('pi-stat-temp').textContent = '--';
       if (document.getElementById('pi-stat-ram')) document.getElementById('pi-stat-ram').textContent = '--';
+    }
+
+    // Pi Console Status LED
+    const piLed = document.getElementById('pi-led');
+    if (piLed) {
+      if (this.physicalHardwareConnected) {
+        piLed.style.background = 'var(--accent-green)';
+        piLed.style.boxShadow = '0 0 8px var(--accent-green)';
+      } else {
+        piLed.style.background = 'var(--accent-red)';
+        piLed.style.boxShadow = '0 0 8px var(--accent-red)';
+      }
     }
 
     // ESP32 Console Footer

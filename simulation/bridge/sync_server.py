@@ -120,6 +120,20 @@ class SyncBridge:
             asyncio.run_coroutine_threadsafe(cls.broadcast_ws(msg), cls.loop)
 
     @classmethod
+    def on_hardware_status_packet(cls, status_data: dict):
+        """Called when Wi-Fi bridge emits a hardware status packet."""
+        if cls.loop and cls.connected_clients:
+            msg = json.dumps(status_data)
+            asyncio.run_coroutine_threadsafe(cls.broadcast_ws(msg), cls.loop)
+
+    @classmethod
+    def on_pi_log_packet(cls, log_entry: dict):
+        """Called when Wi-Fi bridge emits a Raspberry Pi system log."""
+        if cls.loop and cls.connected_clients:
+            msg = json.dumps({"type": "PI_LOG", "data": log_entry})
+            asyncio.run_coroutine_threadsafe(cls.broadcast_ws(msg), cls.loop)
+
+    @classmethod
     def emit_pi_log(cls, message: str, level: str = "INFO", source: str = "VISION"):
         """Emit a Raspberry Pi 3B log message to all connected dashboards."""
         log_entry = {
@@ -171,13 +185,15 @@ class SyncBridge:
     def get_hardware_status_dict(cls) -> dict:
         is_phys = cls.serial_conn.is_physical_connected() if cls.serial_conn else False
         ports = SerialConnector.list_ports()
+        cached = getattr(cls.serial_conn, 'cached_pi_metrics', None)
+        has_real_pi = bool(cached and cached.get("cpu") != "--")
         return {
             "type": "HARDWARE_STATUS",
             "connected": is_phys,
             "port": cls.serial_conn.port if (cls.serial_conn and is_phys) else None,
             "baudrate": cls.serial_conn.baudrate if cls.serial_conn else 115200,
-            "available_ports": [p for p in ports if not p.startswith("MOCK")],
-            "pi_metrics": cls.get_real_metrics()
+            "available_ports": [p for p in ports if not p.startswith("MOCK")] + (["Raspberry Pi 3B (/dev/serial0)"] if is_phys else []),
+            "pi_metrics": cached if has_real_pi else cls.get_real_metrics()
         }
 
     @classmethod
@@ -366,8 +382,10 @@ async def main_async(args):
     )
     SyncBridge.serial_conn.on_telemetry_received = SyncBridge.on_serial_telemetry
     SyncBridge.serial_conn.on_log_received = SyncBridge.on_serial_log
+    SyncBridge.serial_conn.on_hardware_status_received = SyncBridge.on_hardware_status_packet
+    SyncBridge.serial_conn.on_pi_log_received = SyncBridge.on_pi_log_packet
 
-    # Connect to serial or mock
+    # Connect to serial, Wi-Fi bridge, or mock
     SyncBridge.serial_conn.connect(args.serial_port)
 
     # Start HTTP Static Server in a background thread
