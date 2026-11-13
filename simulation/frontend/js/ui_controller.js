@@ -104,6 +104,11 @@ class UIController {
       });
     });
 
+    // Return to Operations Dashboard button in 3D Simulation view
+    document.getElementById('btn-back-to-dashboard')?.addEventListener('click', () => {
+      this.switchPage('dashboard');
+    });
+
     // Global E-Stop Button
     document.getElementById('btn-global-estop')?.addEventListener('click', () => {
       this.emergencyStop();
@@ -571,10 +576,15 @@ class UIController {
     if (data.type === 'HARDWARE_STATUS') {
       if (data.camera) {
         this.latestCameraStatus = data.camera;
+        const fpsStr = (data.camera.fps !== undefined) ? data.camera.fps.toFixed(1) : '10.0';
         const fpsEl = document.getElementById('dash-cam-fps');
-        if (fpsEl && data.camera.fps !== undefined) fpsEl.textContent = data.camera.fps.toFixed(1);
+        if (fpsEl) fpsEl.textContent = fpsStr;
+        const piFpsEl = document.getElementById('pi-stat-fps');
+        if (piFpsEl) piFpsEl.textContent = fpsStr;
         const modelEl = document.getElementById('dash-cam-model');
         if (modelEl && data.camera.backend) modelEl.textContent = data.camera.backend;
+        const piModelEl = document.getElementById('pi-stat-backend');
+        if (piModelEl && data.camera.backend) piModelEl.textContent = data.camera.backend;
         const banner = document.getElementById('dash-cam-offline-banner');
         if (banner) {
           banner.style.display = data.camera.connected ? 'none' : 'flex';
@@ -623,7 +633,7 @@ class UIController {
     this.physicalHardwareConnected = !!connected;
     if (port) {
       // Normalize port name to eliminate twitching from alternating port strings
-      if (port.includes('192.168.137') || port.includes('Wi-Fi')) {
+      if (port.includes('192.168.137') || port.includes('Wi-Fi') || port.includes('8888') || port.includes('serial0')) {
         this.physicalHardwarePort = 'Raspberry Pi 3B (192.168.137.200 -> /dev/serial0)';
       } else {
         this.physicalHardwarePort = port;
@@ -631,7 +641,7 @@ class UIController {
     }
     if (baud) this.physicalHardwareBaud = baud;
 
-    const isWifiBridge = this.physicalHardwarePort && (this.physicalHardwarePort.includes('Wi-Fi') || this.physicalHardwarePort.includes('192.168.137'));
+    const isWifiBridge = this.physicalHardwarePort && (this.physicalHardwarePort.includes('Wi-Fi') || this.physicalHardwarePort.includes('192.168.137') || this.physicalHardwarePort.includes('serial0'));
     
     // Header Pill
     const dot = document.getElementById('hw-status-dot');
@@ -639,7 +649,7 @@ class UIController {
     if (dot && label) {
       if (this.physicalHardwareConnected) {
         dot.classList.add('connected');
-        label.textContent = isWifiBridge ? 'CONNECTED (Pi Wi-Fi -> /dev/serial0)' : `CONNECTED (${this.physicalHardwarePort || 'UART'})`;
+        label.textContent = isWifiBridge ? 'CONNECTED (PI WI-FI -> /dev/serial0)' : `CONNECTED (${this.physicalHardwarePort || 'UART'})`;
       } else {
         dot.classList.remove('connected');
         label.textContent = 'DISCONNECTED';
@@ -692,12 +702,21 @@ class UIController {
       }
     }
 
+    // Update Bench Buttons Visual Disabled/Active state
+    document.querySelectorAll('.bench-btn[data-cmd]').forEach((btn) => {
+      if (this.physicalHardwareConnected) {
+        btn.classList.remove('disabled');
+      } else {
+        btn.classList.add('disabled');
+      }
+    });
+
     // Real Pi Metrics (gathered from backend, never hardcoded fake static numbers)
-    if (piMetrics) {
+    if (piMetrics && this.physicalHardwareConnected) {
       if (document.getElementById('pi-stat-cpu')) document.getElementById('pi-stat-cpu').textContent = piMetrics.cpu || '--';
       if (document.getElementById('pi-stat-temp')) document.getElementById('pi-stat-temp').textContent = piMetrics.temp || '--';
       if (document.getElementById('pi-stat-ram')) document.getElementById('pi-stat-ram').textContent = piMetrics.ram || '--';
-    } else if (!this.physicalHardwareConnected) {
+    } else {
       if (document.getElementById('pi-stat-cpu')) document.getElementById('pi-stat-cpu').textContent = '--';
       if (document.getElementById('pi-stat-temp')) document.getElementById('pi-stat-temp').textContent = '--';
       if (document.getElementById('pi-stat-ram')) document.getElementById('pi-stat-ram').textContent = '--';
@@ -769,22 +788,28 @@ class UIController {
     const streamImg = document.getElementById('dashboard-cam-mjpeg');
     const offlineBanner = document.getElementById('dash-cam-offline-banner');
     const srcBadge = document.getElementById('vision-cam-source-badge');
+    const isLiveCam = !!(this.latestCameraStatus && this.latestCameraStatus.connected);
 
-    if (this.syncMode === 'dashboard') {
-      if (streamImg) {
-        streamImg.style.display = 'block';
+    if (this.activePage === 'dashboard') {
+      if (isLiveCam) {
+        if (streamImg) streamImg.style.display = 'block';
+        if (offlineBanner) offlineBanner.style.display = 'none';
         // Clear canvas so the underlying hardware video stream shows through
         ctx.clearRect(0, 0, w, h);
+        if (srcBadge) {
+          srcBadge.textContent = '🔴 LIVE WEBCAM';
+          srcBadge.style.color = 'var(--accent-green)';
+          srcBadge.style.background = 'rgba(0, 230, 118, 0.15)';
+        }
       } else {
+        if (streamImg) streamImg.style.display = 'none';
+        if (offlineBanner) offlineBanner.style.display = 'flex';
         ctx.fillStyle = '#060a12';
         ctx.fillRect(0, 0, w, h);
-      }
-      if (srcBadge) {
-        const isCamActive = streamImg && streamImg.complete && streamImg.naturalWidth > 0;
-        srcBadge.textContent = isCamActive ? '🔴 LIVE WEBCAM' : 'SEARCHING WEBCAM';
-        srcBadge.style.color = isCamActive ? 'var(--accent-green)' : 'var(--accent-yellow)';
-        if (offlineBanner) {
-          offlineBanner.style.display = isCamActive ? 'none' : 'flex';
+        if (srcBadge) {
+          srcBadge.textContent = '📷 NO WEBCAM';
+          srcBadge.style.color = 'var(--accent-yellow)';
+          srcBadge.style.background = 'rgba(255, 214, 0, 0.15)';
         }
       }
     } else {
@@ -794,6 +819,7 @@ class UIController {
       if (srcBadge) {
         srcBadge.textContent = '🎮 VIRTUAL SIM';
         srcBadge.style.color = 'var(--accent-cyan)';
+        srcBadge.style.background = 'rgba(0, 210, 255, 0.15)';
       }
       if (this.sensors && this.sensors.pipCanvas) {
         try {
@@ -2175,16 +2201,19 @@ class UIController {
   }
 
   emergencyStop() {
+    const wasAlreadyEstop = (this.robotState === 'ESTOP');
     this.robot.setMotorPwm(0, 0);
     this.robot.solenoidActive = false;
     this.robotState = 'ESTOP';
     this.dispatchBenchCommand('x');
-    this.appendPiLog({
-      source: 'SAFETY',
-      level: 'ERROR',
-      message: '[SAFETY] EMERGENCY STOP ACTIVATED! Motors halted, command \'x\' dispatched to serial bridge.',
-      timestamp: Date.now() / 1000
-    });
+    if (!wasAlreadyEstop) {
+      this.appendPiLog({
+        source: 'SAFETY',
+        level: 'ERROR',
+        message: '[SAFETY] EMERGENCY STOP ACTIVATED! Motors halted, command \'x\' dispatched to serial bridge.',
+        timestamp: Date.now() / 1000
+      });
+    }
   }
 
   dispatchBenchCommand(cmd) {
@@ -2663,6 +2692,10 @@ class UIController {
   renderTelemetryChartOffline() {
     const canvas = document.getElementById('dashboard-chart-canvas');
     if (!canvas) return;
+    if (canvas.parentElement && canvas.parentElement.clientWidth > 0) {
+      const targetW = canvas.parentElement.clientWidth - 32;
+      if (Math.abs(canvas.width - targetW) > 5) canvas.width = targetW;
+    }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const w = canvas.width;
@@ -2690,6 +2723,10 @@ class UIController {
   drawTacticalMiniMap() {
     const canvas = document.getElementById('dashboard-map-canvas');
     if (!canvas || !this.mapper || !this.mapper.explorationGrid) return;
+    if (canvas.parentElement && canvas.parentElement.clientWidth > 0) {
+      const targetW = Math.min(320, canvas.parentElement.clientWidth);
+      if (Math.abs(canvas.width - targetW) > 5) canvas.width = targetW;
+    }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
@@ -2759,6 +2796,10 @@ class UIController {
   renderTelemetryChart() {
     const canvas = document.getElementById('dashboard-chart-canvas');
     if (!canvas || this.telemetryHistory.length === 0) return;
+    if (canvas.parentElement && canvas.parentElement.clientWidth > 0) {
+      const targetW = canvas.parentElement.clientWidth - 32;
+      if (Math.abs(canvas.width - targetW) > 5) canvas.width = targetW;
+    }
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
