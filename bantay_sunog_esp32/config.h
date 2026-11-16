@@ -28,6 +28,10 @@
 
 #define PIN_MOTOR_STBY              22       // Standby pin (HIGH = enabled)
 
+// Motor Polarity Inversion (Set true if wheel rotates in reverse during forward command)
+#define INVERT_LEFT_MOTOR           false    // Left wheels move forward normally
+#define INVERT_RIGHT_MOTOR          true     // Invert right wheels so forward command drives both sides forward
+
 // Motor PWM Parameters (LEDC Peripheral)
 #define MOTOR_PWM_FREQ_HZ           20000    // 20 kHz (silent, above audible range)
 #define MOTOR_PWM_RESOLUTION_BITS   8        // 8-bit resolution (0 - 255)
@@ -42,21 +46,22 @@
 #define SPEED_MIN_THRESHOLD         70       // Minimum duty cycle to overcome friction
 
 // -----------------------------------------------------------------------------
-// 3. Aiming Turret & Suppression Actuators
+// 3. Aiming Turret & Fire Extinguisher Can Actuators
 // -----------------------------------------------------------------------------
-#define PIN_SERVO_TILT              13       // Tilt servo for Webcam + Nozzle + Flame sensor
-#define PIN_SOLENOID                23       // Extinguisher valve trigger (via MOSFET/Relay)
+#define PIN_SERVO_TILT              13       // Tilt servo for Webcam + Co-axial Turret + Flame sensor
+#define PIN_SERVO_TRIGGER           23       // Extinguisher trigger servo (TowerPro MG996R)
 
-// Servo Angles (Degrees)
+// Tilt Servo Angles (Degrees)
 #define SERVO_TILT_MIN              45       // Look downward toward close ground
 #define SERVO_TILT_MAX              135      // Look upward toward elevated targets
 #define SERVO_TILT_HOME             90       // Level horizon (neutral)
 #define SERVO_TILT_SMOOTH_DELAY_MS  15       // Milliseconds per degree step
 
-// Solenoid / Extinguisher Parameters
-#define SOLENOID_ACTIVE_HIGH        true     // true: HIGH=Spray, false: LOW=Spray
-#define SOLENOID_MAX_DURATION_MS    3000     // Maximum continuous spray burst (3.0s)
-#define COOLDOWN_DURATION_MS        2000     // Wait for smoke/vapor clearing (2.0s)
+// Fire Extinguisher Canister Servo Trigger Parameters (TowerPro MG996R on GPIO 23)
+#define SERVO_TRIGGER_RELEASED      0        // Idle angle (lever released, valve closed)
+#define SERVO_TRIGGER_ENGAGED       90       // Engaged angle (lever depressed, valve opened)
+#define EXTINGUISHER_MAX_BURST_MS   3000     // Maximum continuous discharge burst (3.0s)
+#define COOLDOWN_DURATION_MS        2000     // Wait for extinguishing aerosol/powder settling (2.0s)
 
 // -----------------------------------------------------------------------------
 // 4. Ultrasonic Sensors (HC-SR04)
@@ -86,7 +91,7 @@
 #define PIN_FLAME_DO                34       // Input Only (LM393 D0 comparator out)
 #define FLAME_SENSOR_ACTIVE_LOW     true     // Most IR flame modules output LOW on fire
 
-// If true, solenoid will ONLY trigger if both vision confirmed AND flame sensor triggers.
+// If true, extinguisher will ONLY trigger if both vision confirmed AND flame sensor triggers.
 // Set false during bench testing if hardware flame module is disconnected.
 #define REQUIRE_HARDWARE_FLAME_VERIFICATION true
 

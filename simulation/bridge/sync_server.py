@@ -63,8 +63,10 @@ class StaticHttpHandler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(FRONTEND_DIR), **kwargs)
 
     def do_GET(self):
+        clean_path = self.path.split('?')[0]
+
         # REST API Endpoints
-        if self.path == "/api/status":
+        if clean_path == "/api/status":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -80,7 +82,7 @@ class StaticHttpHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(status_data).encode("utf-8"))
             return
 
-        elif self.path == "/api/ports":
+        elif clean_path == "/api/ports":
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Access-Control-Allow-Origin", "*")
@@ -89,10 +91,11 @@ class StaticHttpHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps({"ports": ports}).encode("utf-8"))
             return
 
-        elif self.path in ("/video_feed", "/api/video_feed"):
+        elif clean_path in ("/video_feed", "/api/video_feed"):
             # Proxy live MJPEG stream from Raspberry Pi 3B (192.168.137.200:5000)
             import urllib.request
             pi_stream_url = "http://192.168.137.200:5000/video_feed"
+            upstream = None
             try:
                 req = urllib.request.Request(pi_stream_url)
                 upstream = urllib.request.urlopen(req, timeout=3.0)
@@ -107,18 +110,30 @@ class StaticHttpHandler(http.server.SimpleHTTPRequestHandler):
                     chunk = upstream.read(4096)
                     if not chunk:
                         break
-                    self.wfile.write(chunk)
-                    self.wfile.flush()
+                    try:
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+                    except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+                        break
                 return
             except Exception:
-                self.send_response(503)
-                self.send_header("Content-Type", "text/plain")
-                self.send_header("Access-Control-Allow-Origin", "*")
-                self.end_headers()
-                self.wfile.write(b"Pi Video Stream Unavailable")
+                try:
+                    self.send_response(503)
+                    self.send_header("Content-Type", "text/plain")
+                    self.send_header("Access-Control-Allow-Origin", "*")
+                    self.end_headers()
+                    self.wfile.write(b"Pi Video Stream Unavailable")
+                except Exception:
+                    pass
                 return
+            finally:
+                if upstream:
+                    try:
+                        upstream.close()
+                    except Exception:
+                        pass
 
-        elif self.path in ("/snapshot", "/api/snapshot"):
+        elif clean_path in ("/snapshot", "/api/snapshot"):
             import urllib.request
             pi_snap_url = "http://192.168.137.200:5000/snapshot"
             try:
@@ -298,12 +313,12 @@ async def handle_ws(websocket):
                     continue
 
                 # -------------------------------------------------------------
-                # Bench Test Command Dispatch
+                # Command Dispatch (Bench Test, Mission Control, FSM)
                 # -------------------------------------------------------------
-                if msg_type == "BENCH_COMMAND" and SyncBridge.serial_conn:
+                if msg_type in ("BENCH_COMMAND", "COMMAND") and SyncBridge.serial_conn:
                     cmd = data.get("cmd", "")
                     SyncBridge.serial_conn.send_line(cmd)
-                    SyncBridge.emit_pi_log(f"[Bench Test] Dispatched user command '{cmd}' to ESP32", "INFO", "UART")
+                    SyncBridge.emit_pi_log(f"[Command] Dispatched '{cmd}' to ESP32", "INFO", "UART")
                     continue
 
                 # -------------------------------------------------------------
@@ -366,27 +381,44 @@ async def handle_ws(websocket):
                     except Exception as e:
                         logger.error(f"[Vision AI Error] {e}")
 
-                # Handle Sim -> Hardware command dispatch
-                if sync_mode in ("sim2hw", "teleop") and SyncBridge.serial_conn:
+                # Handle Sim -> Hardware command dispatch (including teleop overrides in hw2sim)
+                if sync_mode in ("sim2hw", "teleop", "hw2sim") and SyncBridge.serial_conn:
                     # Translate simulated movement or spray to physical ESP32
                     left_pwm = data.get("left_pwm", 0)
                     right_pwm = data.get("right_pwm", 0)
                     solenoid = data.get("solenoid_active", False)
                     tilt = data.get("tilt_angle", 90)
 
-                    # Send structured serial command or test tokens to ESP32
+                    # Determine motion token
                     if solenoid:
-                        SyncBridge.serial_conn.send_line("f") # Pulse solenoid
+                        cmd = "f"
                     elif left_pwm > 80 and right_pwm > 80:
-                        SyncBridge.serial_conn.send_line("w") # Forward
+                        cmd = "w"
                     elif left_pwm < -80 and right_pwm < -80:
-                        SyncBridge.serial_conn.send_line("s") # Reverse
+                        cmd = "s"
                     elif left_pwm < -80 and right_pwm > 80:
-                        SyncBridge.serial_conn.send_line("a") # Pivot Left
+                        cmd = "a"
                     elif left_pwm > 80 and right_pwm < -80:
-                        SyncBridge.serial_conn.send_line("d") # Pivot Right
+                        cmd = "d"
                     else:
-                        SyncBridge.serial_conn.send_line("x") # Stop
+                        cmd = "x"
+
+                    now = time.time()
+                    last_cmd = getattr(SyncBridge, "_last_teleop_cmd", None)
+                    last_cmd_time = getattr(SyncBridge, "_last_teleop_cmd_time", 0.0)
+
+                    # Only transmit when motion state changes, or as a keep-alive heartbeat every 0.8s
+                    if cmd != last_cmd or (cmd != "x" and (now - last_cmd_time) >= 0.8):
+                        SyncBridge._last_teleop_cmd = cmd
+                        SyncBridge._last_teleop_cmd_time = now
+                        SyncBridge.serial_conn.send_line(cmd)
+
+                    # Forward tilt servo position if changed by >= 3 degrees
+                    if tilt is not None:
+                        last_tilt = getattr(SyncBridge, "_last_teleop_tilt", None)
+                        if last_tilt is None or abs(tilt - last_tilt) >= 3.0:
+                            SyncBridge._last_teleop_tilt = tilt
+                            SyncBridge.serial_conn.send_line(f"tilt {int(tilt)}")
 
                     # Forward vision detections if flame is spotted in virtual camera
                     target = data.get("target")
@@ -460,7 +492,7 @@ async def main_async(args):
 def main():
     parser = argparse.ArgumentParser(description="BANTAY-SUNOG 3D Digital Twin Sync Server")
     parser.add_argument("--host", default="0.0.0.0", help="Host interface (default: 0.0.0.0)")
-    parser.add_argument("--http-port", type=int, default=8000, help="HTTP Dashboard port (default: 8000)")
+    parser.add_argument("--http-port", type=int, default=8050, help="HTTP Dashboard port (default: 8050)")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket port (default: 8765)")
     parser.add_argument("--serial-port", default=None, help="ESP32 COM/serial port (e.g. COM3 or /dev/ttyUSB0)")
     parser.add_argument("--baud", type=int, default=115200, help="Serial baudrate (default: 115200)")

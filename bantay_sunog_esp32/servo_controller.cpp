@@ -1,20 +1,37 @@
 #include "servo_controller.h"
 
 ServoController::ServoController()
-    : _currentAngle(SERVO_TILT_HOME), _sweepDirection(1), _lastSweepMs(0) {}
+    : _currentAngle(SERVO_TILT_HOME), _sweepDirection(1), _lastSweepMs(0),
+      _triggerActive(false), _triggerStartTimeMs(0) {}
 
 void ServoController::begin() {
     // Allocate timers for ESP32Servo
     ESP32PWM::allocateTimer(2);
-    _servo.setPeriodHertz(50); // Standard 50Hz servo
-    _servo.attach(PIN_SERVO_TILT, 500, 2400); // 500us to 2400us pulse width
+    ESP32PWM::allocateTimer(3);
 
+    // 1. Tilt Servo (TowerPro MG90S on GPIO 13)
+    _tiltServo.setPeriodHertz(50);
+    _tiltServo.attach(PIN_SERVO_TILT, 500, 2400);
     home();
+
+    // 2. Extinguisher Trigger Servo (TowerPro MG996R on GPIO 23)
+    _triggerServo.setPeriodHertz(50);
+    _triggerServo.attach(PIN_SERVO_TRIGGER, 500, 2400);
+    releaseExtinguisher();
+}
+
+void ServoController::update() {
+    // Unconditional fail-safe watchdog: release trigger if burst exceeds maximum duration
+    if (_triggerActive) {
+        if (millis() - _triggerStartTimeMs >= EXTINGUISHER_MAX_BURST_MS) {
+            releaseExtinguisher();
+        }
+    }
 }
 
 void ServoController::setAngle(int angleDeg) {
     _currentAngle = constrain(angleDeg, SERVO_TILT_MIN, SERVO_TILT_MAX);
-    _servo.write(_currentAngle);
+    _tiltServo.write(_currentAngle);
 }
 
 void ServoController::home() {
@@ -24,16 +41,10 @@ void ServoController::home() {
 bool ServoController::adjustPitch(float targetY) {
     float yError = targetY - OPTICAL_CENTER_Y;
 
-    // Check if target is already vertically centered within deadband
     if (fabs(yError) <= Y_ALIGN_TOLERANCE) {
         return true;
     }
 
-    // In computer vision coordinates, y=0.0 is top of image, y=1.0 is bottom.
-    // If flame is near the top (y < 0.5), we need to pitch the camera UP (+angle or -angle depending on linkage).
-    // Standard convention: Increasing angle pitches upward.
-    // Therefore: error < 0 -> target is up -> increase angle.
-    //            error > 0 -> target is down -> decrease angle.
     int angleDelta = round(-yError * KP_SERVO_PITCH);
     if (angleDelta == 0) {
         angleDelta = (yError < 0) ? 1 : -1;
@@ -45,7 +56,6 @@ bool ServoController::adjustPitch(float targetY) {
 
 void ServoController::updateSearchSweep() {
     uint32_t now = millis();
-    // Step sweep every 80 ms for a gentle head scan
     if (now - _lastSweepMs < 80) {
         return;
     }
@@ -61,4 +71,21 @@ void ServoController::updateSearchSweep() {
     }
 
     setAngle(newAngle);
+}
+
+void ServoController::triggerExtinguisher() {
+    _triggerActive = true;
+    _triggerStartTimeMs = millis();
+    _triggerServo.write(SERVO_TRIGGER_ENGAGED);
+}
+
+void ServoController::releaseExtinguisher() {
+    _triggerActive = false;
+    _triggerStartTimeMs = 0;
+    _triggerServo.write(SERVO_TRIGGER_RELEASED);
+}
+
+uint32_t ServoController::getExtinguisherElapsedMs() const {
+    if (!_triggerActive) return 0;
+    return millis() - _triggerStartTimeMs;
 }

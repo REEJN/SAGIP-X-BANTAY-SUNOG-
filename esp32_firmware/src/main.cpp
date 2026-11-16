@@ -6,6 +6,7 @@
 #include "sensor_manager.h"
 #include "telemetry_parser.h"
 #include "telemetry_reporter.h"
+#include "navigation_model.h"
 
 // Subsystem instances
 static MotorController motorCtrl;
@@ -35,6 +36,7 @@ void transitionTo(RobotState newState) {
 // -----------------------------------------------------------------------------
 static bool streamSensorsActive = false;
 static uint32_t lastSensorStreamMs = 0;
+static uint32_t lastManualCmdMs = 0;
 static String serialInputBuffer = "";
 
 void printTestMenu() {
@@ -55,7 +57,7 @@ void printTestMenu() {
     Serial.println("   h      : Tilt Level / HOME (90 degrees)");
     Serial.println("   sweep  : Test smooth servo sweep (45 to 135 deg)");
     Serial.println(" [SUPPRESSION]");
-    Serial.println("   f      : Fire Solenoid Pulse (1.0 sec spray)");
+    Serial.println("   f      : Trigger Extinguisher Can Servo (1.0 sec test burst)");
     Serial.println(" [SENSORS]");
     Serial.println("   r      : Snapshot read of all sensors");
     Serial.println("   t      : Toggle continuous live sensor stream (250ms)");
@@ -92,48 +94,44 @@ void handleSerialCommands() {
                     motorCtrl.testDirectGpios();
                 } else if (cmd.equalsIgnoreCase("w")) {
                     transitionTo(STATE_MANUAL_TEST);
-                    Serial.println("[TEST] Driving FORWARD for 1 second...");
+                    lastManualCmdMs = millis();
                     motorCtrl.forward(SPEED_APPROACH_BASE);
-                    delay(1000);
-                    motorCtrl.stop();
-                    Serial.println("[TEST] Motors stopped.");
+                    Serial.println("[CMD] Moving FORWARD (Continuous Teleop)");
                 } else if (cmd.equalsIgnoreCase("s")) {
                     transitionTo(STATE_MANUAL_TEST);
-                    Serial.println("[TEST] Driving REVERSE for 1 second...");
+                    lastManualCmdMs = millis();
                     motorCtrl.reverse(SPEED_APPROACH_BASE);
-                    delay(1000);
-                    motorCtrl.stop();
-                    Serial.println("[TEST] Motors stopped.");
+                    Serial.println("[CMD] Moving REVERSE (Continuous Teleop)");
                 } else if (cmd.equalsIgnoreCase("a")) {
                     transitionTo(STATE_MANUAL_TEST);
-                    Serial.println("[TEST] Pivoting LEFT for 0.8 second...");
+                    lastManualCmdMs = millis();
                     motorCtrl.pivotLeft(SPEED_PIVOT_ALIGN);
-                    delay(800);
-                    motorCtrl.stop();
-                    Serial.println("[TEST] Motors stopped.");
+                    Serial.println("[CMD] Pivoting LEFT (Continuous Teleop)");
                 } else if (cmd.equalsIgnoreCase("d")) {
                     transitionTo(STATE_MANUAL_TEST);
-                    Serial.println("[TEST] Pivoting RIGHT for 0.8 second...");
+                    lastManualCmdMs = millis();
                     motorCtrl.pivotRight(SPEED_PIVOT_ALIGN);
-                    delay(800);
-                    motorCtrl.stop();
-                    Serial.println("[TEST] Motors stopped.");
+                    Serial.println("[CMD] Pivoting RIGHT (Continuous Teleop)");
                 } else if (cmd.equalsIgnoreCase("x")) {
                     transitionTo(STATE_MANUAL_TEST);
                     motorCtrl.stop();
-                    sensorMgr.deactivateSolenoid();
-                    Serial.println("[TEST] EMERGENCY STOP: All actuators halted.");
+                    servoCtrl.releaseExtinguisher();
+                    Serial.println("[CMD] STOP: All actuators halted.");
                 } else if (cmd.equalsIgnoreCase("u")) {
                     int newAngle = servoCtrl.getAngle() + 10;
                     servoCtrl.setAngle(newAngle);
-                    Serial.printf("[TEST] Tilt UP: %d deg\n", servoCtrl.getAngle());
+                    Serial.printf("[CMD] Tilt UP: %d deg\n", servoCtrl.getAngle());
                 } else if (cmd.equalsIgnoreCase("j")) {
                     int newAngle = servoCtrl.getAngle() - 10;
                     servoCtrl.setAngle(newAngle);
-                    Serial.printf("[TEST] Tilt DOWN: %d deg\n", servoCtrl.getAngle());
+                    Serial.printf("[CMD] Tilt DOWN: %d deg\n", servoCtrl.getAngle());
                 } else if (cmd.equalsIgnoreCase("h")) {
                     servoCtrl.home();
-                    Serial.printf("[TEST] Tilt HOME: %d deg (level)\n", servoCtrl.getAngle());
+                    Serial.printf("[CMD] Tilt HOME: %d deg (level)\n", servoCtrl.getAngle());
+                } else if (cmd.startsWith("tilt ") || cmd.startsWith("TILT ")) {
+                    int newAngle = cmd.substring(5).toInt();
+                    servoCtrl.setAngle(newAngle);
+                    Serial.printf("[CMD] Tilt turret set to %d deg\n", servoCtrl.getAngle());
                 } else if (cmd.equalsIgnoreCase("sweep")) {
                     Serial.println("[TEST] Executing full servo sweep...");
                     for (int a = 90; a >= SERVO_TILT_MIN; a -= 2) { servoCtrl.setAngle(a); delay(20); }
@@ -142,11 +140,21 @@ void handleSerialCommands() {
                     Serial.println("[TEST] Sweep complete. Restored to 90 deg.");
                 } else if (cmd.equalsIgnoreCase("f")) {
                     transitionTo(STATE_MANUAL_TEST);
-                    Serial.println("[TEST] Activating Extinguisher Solenoid for 1.0 second...");
-                    sensorMgr.activateSolenoid();
+                    Serial.println("[TEST] Squeezing Fire Extinguisher Can Trigger (MG996R on GPIO 23) for 1.0 second...");
+                    servoCtrl.triggerExtinguisher();
                     delay(1000);
-                    sensorMgr.deactivateSolenoid();
-                    Serial.println("[TEST] Solenoid deactivated.");
+                    servoCtrl.releaseExtinguisher();
+                    Serial.println("[TEST] Extinguisher trigger released.");
+                } else if (cmd.equalsIgnoreCase("start") || cmd.equalsIgnoreCase("patrol") || cmd.equalsIgnoreCase("g")) {
+                    transitionTo(STATE_SEARCHING);
+                    Serial.println("[CMD] Autonomous patrol started (STATE_SEARCHING).");
+                } else if (cmd.equalsIgnoreCase("pause") || cmd.equalsIgnoreCase("idle") || cmd.equalsIgnoreCase("stop")) {
+                    motorCtrl.stop();
+                    transitionTo(STATE_IDLE);
+                    Serial.println("[CMD] Robot halted in safe standby (STATE_IDLE).");
+                } else if (cmd.equalsIgnoreCase("handshake") || cmd.equalsIgnoreCase("ready")) {
+                    transitionTo(STATE_IDLE);
+                    Serial.println("[HANDSHAKE] Manual override: Pi handshake confirmed (STATE_IDLE).");
                 } else if (cmd.equalsIgnoreCase("r")) {
                     Serial.printf("[SENSORS] Front: %.1f cm | Left: %.1f cm | Right: %.1f cm | Flame Sensor: [%s]\n",
                                   sensorMgr.getFrontDistance(),
@@ -187,7 +195,7 @@ void handleSerialCommands() {
                 } else if (cmd.equalsIgnoreCase("test")) {
                     transitionTo(STATE_MANUAL_TEST);
                     motorCtrl.stop();
-                    sensorMgr.deactivateSolenoid();
+                    servoCtrl.releaseExtinguisher();
                     Serial.println("[MODE] Entered MANUAL_TEST mode. Autonomous navigation paused.");
                     Serial.println("       Type 'help' or 'm' to see all test commands.");
                 } else if (cmd.equalsIgnoreCase("auto")) {
@@ -237,8 +245,10 @@ void setup() {
     sensorMgr.begin();
 
     Serial.println("[SYSTEM] ESP32 Firefighting Controller READY.");
-    Serial.println("[INFO] >> Type 'help' or 'm' in Serial Monitor for interactive diagnostics! <<");
-    transitionTo(STATE_SEARCHING);
+    Serial.println("[INFO] >> Waiting for Raspberry Pi 3B Linux boot & vision ready... <<");
+    motorCtrl.stop();
+    servoCtrl.home();
+    transitionTo(STATE_BOOT_WAIT_PI);
 }
 
 void loop() {
@@ -250,16 +260,59 @@ void loop() {
     // 1. Process incoming messages from Raspberry Pi
     parser.update();
 
-    // 2. Poll sensors (ultrasonic round-robin, flame sensor, solenoid watchdog)
+    // 2. Poll sensors (ultrasonic round-robin, flame sensor) and update servos
     sensorMgr.update();
+    servoCtrl.update();
 
     const VisionTarget& target = parser.getTarget();
     bool targetFresh = parser.isTargetFresh();
+
+    // Global Command & Handshake Intercepts
+    if (targetFresh) {
+        if (target.event == EVENT_PI_READY && currentState == STATE_BOOT_WAIT_PI) {
+            Serial.println("[HANDSHAKE] Raspberry Pi 3B vision engine CONFIRMED online!");
+            Serial2.println("{\"type\":\"ESP32_ACK\",\"msg\":\"HANDSHAKE_CONFIRMED\",\"new_state\":\"IDLE\"}");
+            transitionTo(STATE_IDLE);
+        } else if (target.event == EVENT_START_PATROL && (currentState == STATE_IDLE || currentState == STATE_BOOT_WAIT_PI)) {
+            Serial.println("[CMD] Mission START received -> Entering STATE_SEARCHING");
+            transitionTo(STATE_SEARCHING);
+        } else if (target.event == EVENT_PAUSE_STANDBY) {
+            Serial.println("[CMD] Mission PAUSE received -> Entering STATE_IDLE");
+            motorCtrl.stop();
+            servoCtrl.home();
+            transitionTo(STATE_IDLE);
+        }
+    }
 
     // -------------------------------------------------------------------------
     // 3. Finite State Machine
     // -------------------------------------------------------------------------
     switch (currentState) {
+
+        // =====================================================================
+        // STATE_BOOT_WAIT_PI: Halted at Boot, Waiting for Pi Linux Boot & Vision
+        // =====================================================================
+        case STATE_BOOT_WAIT_PI: {
+            motorCtrl.stop();
+            servoCtrl.home();
+
+            static uint32_t lastBootBeaconMs = 0;
+            if (now - lastBootBeaconMs >= 1000) {
+                lastBootBeaconMs = now;
+                Serial2.println("{\"type\":\"ESP32_BOOT\",\"state\":\"WAITING_FOR_PI\"}");
+                Serial.println("[BOOT] Waiting for Raspberry Pi 3B bridge ready...");
+            }
+            break;
+        }
+
+        // =====================================================================
+        // STATE_IDLE: Safe Standby, Subsystems Armed, Awaiting Start Command
+        // =====================================================================
+        case STATE_IDLE: {
+            motorCtrl.stop();
+            servoCtrl.home();
+            break;
+        }
 
         // =====================================================================
         // STATE_SEARCHING: Autonomous Patrol & Room Sweep with Obstacle Avoidance
@@ -275,35 +328,31 @@ void loop() {
                 break;
             }
 
-            float dF = sensorMgr.getFrontDistance();
-            float dL = sensorMgr.getLeftDistance();
-            float dR = sensorMgr.getRightDistance();
-
-            // Geometric Classification of Obstruction:
-            // Continuous Wall (both flanks constrained or symmetric close corridor) vs Discrete Obstacle (open flank)
-            bool isWall = (dL < 60.0f && dR < 60.0f) || (fabsf(dL - dR) < 18.0f && dF < 45.0f);
-            bool isFlankClearRight = (dR >= dL);
-
+            // TinyML Neural Navigation Policy vs Legacy Rule-Based FSM
+            #if USE_TINYML_NAV
+            int16_t pwm_l = 0;
+            int16_t pwm_r = 0;
+            nav_model_predict_from_sensors(
+                sensorMgr.getFrontDistance() / 100.0f,
+                sensorMgr.getLeftDistance() / 100.0f,
+                sensorMgr.getRightDistance() / 100.0f,
+                0.0f, 5.0f, false, 0.0f,
+                &pwm_l, &pwm_r
+            );
+            motorCtrl.setRawMotors(pwm_l, pwm_r);
+            servoCtrl.updateSearchSweep();
+            #else
             // Obstacle Avoidance Navigation
             if (sensorMgr.isFrontBlocked()) {
-                if (isWall) {
-                    // Continuous Wall Encountered: Execute decisive 90-degree Lane Turn away from wall
-                    if (now - lastRoamTurnMs > 600) {
-                        roamingTurnLeft = !isFlankClearRight;
-                        lastRoamTurnMs = now;
-                    }
-                    if (roamingTurnLeft) {
-                        motorCtrl.pivotLeft(SPEED_OBSTACLE_TURN);
-                    } else {
-                        motorCtrl.pivotRight(SPEED_OBSTACLE_TURN);
-                    }
+                // Front obstacle detected! Decide which way to turn
+                if (now - lastRoamTurnMs > 600) {
+                    roamingTurnLeft = (sensorMgr.getLeftDistance() >= sensorMgr.getRightDistance());
+                    lastRoamTurnMs = now;
+                }
+                if (roamingTurnLeft) {
+                    motorCtrl.pivotLeft(SPEED_OBSTACLE_TURN);
                 } else {
-                    // Discrete Obstacle (Crate / Barrel): Perform smooth bypass curve without losing lane heading
-                    if (isFlankClearRight) {
-                        motorCtrl.driveSteer(SPEED_SEARCH_ROAM, 75); // curve right around crate
-                    } else {
-                        motorCtrl.driveSteer(SPEED_SEARCH_ROAM, -75); // curve left around crate
-                    }
+                    motorCtrl.pivotRight(SPEED_OBSTACLE_TURN);
                 }
             } else if (sensorMgr.isLeftBlocked()) {
                 // Steer slightly away from left wall
@@ -316,6 +365,7 @@ void loop() {
                 motorCtrl.forward(SPEED_SEARCH_ROAM);
                 servoCtrl.updateSearchSweep();
             }
+            #endif
             break;
         }
 
@@ -414,7 +464,7 @@ void loop() {
         }
 
         // =====================================================================
-        // STATE_EXTINGUISHING: Flame Verification & Solenoid Valve Suppression
+        // STATE_EXTINGUISHING: Flame Verification & Fire Extinguisher Can Suppression
         // =====================================================================
         case STATE_EXTINGUISHING: {
             motorCtrl.stop();
@@ -423,10 +473,10 @@ void loop() {
             bool flameVerified = sensorMgr.isFlameDetected();
 
 #if REQUIRE_HARDWARE_FLAME_VERIFICATION
-            if (!flameVerified && !sensorMgr.isSolenoidActive()) {
+            if (!flameVerified && !servoCtrl.isExtinguisherActive()) {
                 // If flame sensor hasn't triggered yet, allow up to 600ms for fine adjustment
                 if (now - stateEnterMs > 600) {
-                    Serial.println("[EXTINGUISH] Hardware flame sensor did not verify flame. Aborting spray.");
+                    Serial.println("[EXTINGUISH] Hardware flame sensor did not verify flame. Aborting suppression.");
                     transitionTo(STATE_COOLDOWN);
                     break;
                 }
@@ -434,29 +484,29 @@ void loop() {
             }
 #endif
 
-            // Trigger fire extinguishing solenoid valve / pump
-            if (!sensorMgr.isSolenoidActive()) {
-                Serial.println("[EXTINGUISH] Fire verified! Activating suppression solenoid...");
-                sensorMgr.activateSolenoid();
+            // Trigger fire extinguisher can via TowerPro MG996R high-torque servo
+            if (!servoCtrl.isExtinguisherActive()) {
+                Serial.println("[EXTINGUISH] Fire verified! Squeezing fire extinguisher can trigger lever...");
+                servoCtrl.triggerExtinguisher();
             }
 
-            // Check if spray duration has concluded
-            if (sensorMgr.getSolenoidElapsedMs() >= SOLENOID_MAX_DURATION_MS) {
-                sensorMgr.deactivateSolenoid();
-                Serial.println("[EXTINGUISH] Spray cycle completed.");
+            // Check if burst duration has concluded
+            if (servoCtrl.getExtinguisherElapsedMs() >= EXTINGUISHER_MAX_BURST_MS) {
+                servoCtrl.releaseExtinguisher();
+                Serial.println("[EXTINGUISH] Extinguisher burst completed. Releasing trigger lever.");
                 transitionTo(STATE_COOLDOWN);
             }
             break;
         }
 
         // =====================================================================
-        // STATE_COOLDOWN: Settle Vapor/Smoke & Evaluate Extinguishment Success
+        // STATE_COOLDOWN: Settle Agent/Smoke & Evaluate Extinguishment Success
         // =====================================================================
         case STATE_COOLDOWN: {
             motorCtrl.stop();
-            sensorMgr.deactivateSolenoid();
+            servoCtrl.releaseExtinguisher();
 
-            // Wait for extinguisher vapor to clear
+            // Wait for extinguisher aerosol/powder to clear
             if (now - stateEnterMs >= COOLDOWN_DURATION_MS) {
                 if (!targetFresh || target.event == EVENT_NO_FIRE || target.event == EVENT_FIRE_LOST) {
                     Serial.println("[COOLDOWN] Target extinguished successfully! Resuming patrol.");
@@ -476,7 +526,14 @@ void loop() {
         // STATE_MANUAL_TEST: Interactive bench test mode (motors idle unless commanded)
         // =====================================================================
         case STATE_MANUAL_TEST: {
-            // Autonomous state machine paused; manual test commands active
+            // Autonomous state machine paused; manual test & teleop active
+            // Safety watchdog: stop motors if manual movement commanded but no command for 1.8s
+            if (motorCtrl.getLeftPwm() != 0 || motorCtrl.getRightPwm() != 0) {
+                if (now - lastManualCmdMs > 1800) {
+                    motorCtrl.stop();
+                    Serial.println("[WATCHDOG] Manual command timeout: motors halted.");
+                }
+            }
             break;
         }
 
@@ -495,7 +552,7 @@ void loop() {
     telemetry.dist_right_cm = sensorMgr.getRightDistance();
     telemetry.flame_sensor_triggered = sensorMgr.isFlameDetected();
     telemetry.tilt_angle_deg = servoCtrl.getAngle();
-    telemetry.solenoid_active = sensorMgr.isSolenoidActive();
+    telemetry.solenoid_active = servoCtrl.isExtinguisherActive();
     telemetry.left_motor_pwm = motorCtrl.getLeftPwm();
     telemetry.right_motor_pwm = motorCtrl.getRightPwm();
     telemetry.uptime_ms = now;

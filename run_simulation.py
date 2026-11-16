@@ -38,7 +38,7 @@ BANNER = """
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Launch BANTAY-SUNOG 3D Simulation")
-    parser.add_argument("--port", type=int, default=8000, help="HTTP dashboard port (default: 8000)")
+    parser.add_argument("--port", type=int, default=8050, help="HTTP dashboard port (default: 8050)")
     parser.add_argument("--ws-port", type=int, default=8765, help="WebSocket port (default: 8765)")
     parser.add_argument("--serial-port", default=None, help="ESP32 COM port (e.g. COM3). Omit for auto/mock.")
     parser.add_argument("--no-browser", action="store_true", help="Do not automatically open web browser")

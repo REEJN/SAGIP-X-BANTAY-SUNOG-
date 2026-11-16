@@ -11,6 +11,8 @@
  */
 enum RobotState {
     STATE_INIT = 0,
+    STATE_BOOT_WAIT_PI,          // Halted at boot: waiting for Raspberry Pi 3B Linux boot & vision ready
+    STATE_IDLE,                  // Stationary Standby: Pi confirmed ready, live telem streaming, waiting for start trigger
     STATE_SEARCHING,             // Autonomous patrol & room sweep with obstacle avoidance
     STATE_TRACKING_CANDIDATE,    // Decelerating and centering on a tentative fire candidate
     STATE_ALIGNING,              // In-place rotation (yaw) and servo tilt (pitch) to center flame
@@ -28,6 +30,8 @@ enum RobotState {
 inline const char* robotStateToString(RobotState state) {
     switch (state) {
         case STATE_INIT:               return "INIT";
+        case STATE_BOOT_WAIT_PI:       return "WAITING_FOR_PI";
+        case STATE_IDLE:               return "IDLE";
         case STATE_SEARCHING:          return "SEARCHING";
         case STATE_TRACKING_CANDIDATE: return "TRACKING_CANDIDATE";
         case STATE_ALIGNING:           return "ALIGNING";
@@ -50,7 +54,10 @@ enum VisionEvent {
     EVENT_FIRE_CANDIDATE,
     EVENT_NO_FIRE,
     EVENT_FIRE_LOST,
-    EVENT_ERROR
+    EVENT_ERROR,
+    EVENT_PI_READY,
+    EVENT_START_PATROL,
+    EVENT_PAUSE_STANDBY
 };
 
 /**

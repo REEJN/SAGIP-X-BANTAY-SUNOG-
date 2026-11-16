@@ -75,6 +75,8 @@ class SensorSimulator {
     // -------------------------------------------------------------------------
     this.flameDetected = false;
     this.detectedFlameTarget = null; // { x, y, confidence, bbox, distance }
+    this.usePhysicalSensors = false;
+    this.lastPhysicalSensorTime = 0;
 
     // -------------------------------------------------------------------------
     // 4. Extinguisher Spray Particles
@@ -119,130 +121,137 @@ class SensorSimulator {
   }
 
   update(dt, arenaWalls = []) {
-    // -------------------------------------------------------------------------
-    // 1. Raycast Ultrasonic Sensors
-    // -------------------------------------------------------------------------
-    const fireHitboxes = (this.fireSystem && this.fireSystem.getHitboxMeshes)
-      ? this.fireSystem.getHitboxMeshes()
-      : [];
+    const isPhysical = this.usePhysicalSensors && (Date.now() - (this.lastPhysicalSensorTime || 0) < 2000);
 
-    const obstacleMeshes = [
-      ...this.obstacleManager.getRaycastMeshes(),
-      ...arenaWalls
-    ];
+    if (isPhysical) {
+      // Re-project 3D ultrasonic visual rays using real physical sensor readings
+      this.reprojectPhysicalRays();
+    } else {
+      // -------------------------------------------------------------------------
+      // Pure Virtual SIL Simulation Raycasting
+      // -------------------------------------------------------------------------
+      const fireHitboxes = (this.fireSystem && this.fireSystem.getHitboxMeshes)
+        ? this.fireSystem.getHitboxMeshes()
+        : [];
 
-    const collidableMeshes = [
-      ...obstacleMeshes,
-      ...fireHitboxes
-    ];
+      const obstacleMeshes = [
+        ...this.obstacleManager.getRaycastMeshes(),
+        ...arenaWalls
+      ];
 
-    const sensorConfigs = [
-      { key: 'front', mount: this.robot.ultrasonicMounts.front, angleOffset: 0 },
-      { key: 'left', mount: this.robot.ultrasonicMounts.left, angleOffset: -Math.PI / 4 },
-      { key: 'right', mount: this.robot.ultrasonicMounts.right, angleOffset: Math.PI / 4 }
-    ];
+      const collidableMeshes = [
+        ...obstacleMeshes,
+        ...fireHitboxes
+      ];
 
-    sensorConfigs.forEach((cfg) => {
-      if (!cfg.mount) return;
+      const sensorConfigs = [
+        { key: 'front', mount: this.robot.ultrasonicMounts.front, angleOffset: 0 },
+        { key: 'left', mount: this.robot.ultrasonicMounts.left, angleOffset: -Math.PI / 4 },
+        { key: 'right', mount: this.robot.ultrasonicMounts.right, angleOffset: Math.PI / 4 }
+      ];
 
-      const origin = new THREE.Vector3();
-      cfg.mount.getWorldPosition(origin);
+      sensorConfigs.forEach((cfg) => {
+        if (!cfg.mount) return;
 
-      // Ray direction based on robot yaw + sensor angle offset
-      const rayYaw = this.robot.yaw + cfg.angleOffset;
-      const direction = new THREE.Vector3(Math.sin(rayYaw), 0, Math.cos(rayYaw)).normalize();
+        const origin = new THREE.Vector3();
+        cfg.mount.getWorldPosition(origin);
 
-      this.raycaster.set(origin, direction);
-      const intersects = this.raycaster.intersectObjects(collidableMeshes, false);
+        // Ray direction based on robot yaw + sensor angle offset
+        const rayYaw = this.robot.yaw + cfg.angleOffset;
+        const direction = new THREE.Vector3(Math.sin(rayYaw), 0, Math.cos(rayYaw)).normalize();
 
-      let distMeters = this.maxUltrasonicDistMeters;
-      if (intersects.length > 0) {
-        distMeters = intersects[0].distance;
-      }
+        this.raycaster.set(origin, direction);
+        const intersects = this.raycaster.intersectObjects(collidableMeshes, false);
 
-      const distCm = Math.round(distMeters * 100.0 * 10.0) / 10.0;
-      this.distances[cfg.key] = distCm;
+        let distMeters = this.maxUltrasonicDistMeters;
+        if (intersects.length > 0) {
+          distMeters = intersects[0].distance;
+        }
 
-      // Update 3D visual ray
-      const vis = this.rayVisuals[cfg.key];
-      const endPoint = origin.clone().add(direction.clone().multiplyScalar(distMeters));
-      const posAttr = vis.line.geometry.attributes.position;
-      posAttr.setXYZ(0, origin.x, origin.y, origin.z);
-      posAttr.setXYZ(1, endPoint.x, endPoint.y, endPoint.z);
-      posAttr.needsUpdate = true;
+        const distCm = Math.round(distMeters * 100.0 * 10.0) / 10.0;
+        this.distances[cfg.key] = distCm;
 
-      // Color coding: Red if obstacle < 25 cm, Yellow if < 40 cm, Cyan if clear
-      if (distCm < 25.0) {
-        vis.material.color.setHex(0xff334b);
-      } else if (distCm < 40.0) {
-        vis.material.color.setHex(0xffaa00);
-      } else {
-        vis.material.color.setHex(0x00d2ff);
-      }
-    });
+        // Update 3D visual ray
+        const vis = this.rayVisuals[cfg.key];
+        const endPoint = origin.clone().add(direction.clone().multiplyScalar(distMeters));
+        const posAttr = vis.line.geometry.attributes.position;
+        posAttr.setXYZ(0, origin.x, origin.y, origin.z);
+        posAttr.setXYZ(1, endPoint.x, endPoint.y, endPoint.z);
+        posAttr.needsUpdate = true;
 
-    // -------------------------------------------------------------------------
-    // 2. Hardware IR Flame Sensor Simulation (FOV + Occlusion)
-    // -------------------------------------------------------------------------
-    this.flameDetected = false;
-    this.detectedFlameTarget = null;
+        // Color coding: Red if obstacle < 25 cm, Yellow if < 40 cm, Cyan if clear
+        if (distCm < 25.0) {
+          vis.material.color.setHex(0xff334b);
+        } else if (distCm < 40.0) {
+          vis.material.color.setHex(0xffaa00);
+        } else {
+          vis.material.color.setHex(0x00d2ff);
+        }
+      });
 
-    const flameOrigin = new THREE.Vector3();
-    this.robot.flameSensorMount.getWorldPosition(flameOrigin);
+      // -------------------------------------------------------------------------
+      // Hardware IR Flame Sensor Simulation (FOV + Occlusion)
+      // -------------------------------------------------------------------------
+      this.flameDetected = false;
+      this.detectedFlameTarget = null;
 
-    // Optical forward vector of tilt turret
-    const opticalDir = new THREE.Vector3();
-    this.robot.cameraMount.getWorldDirection(opticalDir);
+      const flameOrigin = new THREE.Vector3();
+      this.robot.flameSensorMount.getWorldPosition(flameOrigin);
 
-    const activeFires = this.fireSystem.getActiveFires();
+      // Optical forward vector of tilt turret
+      const opticalDir = new THREE.Vector3();
+      this.robot.cameraMount.getWorldDirection(opticalDir);
 
-    for (const fire of activeFires) {
-      const fireCenter = fire.position.clone().add(new THREE.Vector3(0, 0.25, 0));
-      const toFire = new THREE.Vector3().subVectors(fireCenter, flameOrigin);
-      const dist = toFire.length();
+      const activeFires = this.fireSystem.getActiveFires();
 
-      // Check max detection range (~2.5m)
-      if (dist <= 2.5) {
-        const toFireNorm = toFire.clone().normalize();
-        const dot = opticalDir.dot(toFireNorm);
-        const angle = Math.acos(Math.min(1.0, Math.max(-1.0, dot)));
+      for (const fire of activeFires) {
+        const fireCenter = fire.position.clone().add(new THREE.Vector3(0, 0.25, 0));
+        const toFire = new THREE.Vector3().subVectors(fireCenter, flameOrigin);
+        const dist = toFire.length();
 
-        // Check sensor FOV cone (+/- 30 deg = 0.52 rad)
-        if (angle <= 0.52) {
-          // Check line-of-sight obstruction by obstacles (crates, walls)
-          this.raycaster.set(flameOrigin, toFireNorm);
-          const hits = this.raycaster.intersectObjects(obstacleMeshes, false);
+        // Check max detection range (~2.5m)
+        if (dist <= 2.5) {
+          const toFireNorm = toFire.clone().normalize();
+          const dot = opticalDir.dot(toFireNorm);
+          const angle = Math.acos(Math.min(1.0, Math.max(-1.0, dot)));
 
-          let occluded = false;
-          if (hits.length > 0 && hits[0].distance < dist - 0.2) {
-            occluded = true; // Obstacle is between sensor and flame
-          }
+          // Check sensor FOV cone (+/- 30 deg = 0.52 rad)
+          if (angle <= 0.52) {
+            // Check line-of-sight obstruction by obstacles (crates, walls)
+            this.raycaster.set(flameOrigin, toFireNorm);
+            const hits = this.raycaster.intersectObjects(obstacleMeshes, false);
 
-          if (!occluded) {
-            this.flameDetected = true;
-
-            // Calculate projected normalized screen coordinates (x, y) in camera view
-            const screenPos = fireCenter.clone().project(this.virtualCamera);
-            // screenPos.x and screenPos.y are in [-1, 1] NDC
-            if (screenPos.z > 0 && screenPos.z < 1) {
-              const normX = (screenPos.x + 1) / 2; // True optical coordinates (0.0=left, 1.0=right)
-              const normY = (1 - screenPos.y) / 2; // Top-down image Y (0.0=top, 1.0=bottom)
-
-              // Estimate bounding box in 640x480 pixel space
-              const boxScale = Math.min(220, Math.max(30, 180 / dist));
-              const pixelX = Math.round(normX * 640 - boxScale / 2);
-              const pixelY = Math.round(normY * 480 - boxScale / 2);
-
-              this.detectedFlameTarget = {
-                fireId: fire.id,
-                confidence: Math.min(0.98, Math.max(0.65, 1.0 - (dist / 3.0) * 0.4)),
-                x: Math.round(normX * 1000) / 1000,
-                y: Math.round(normY * 1000) / 1000,
-                bbox: [pixelX, pixelY, Math.round(boxScale), Math.round(boxScale * 1.2)],
-                distanceCm: Math.round(dist * 100)
-              };
+            let occluded = false;
+            if (hits.length > 0 && hits[0].distance < dist - 0.2) {
+              occluded = true; // Obstacle is between sensor and flame
             }
-            break;
+
+            if (!occluded) {
+              this.flameDetected = true;
+
+              // Calculate projected normalized screen coordinates (x, y) in camera view
+              const screenPos = fireCenter.clone().project(this.virtualCamera);
+              // screenPos.x and screenPos.y are in [-1, 1] NDC
+              if (screenPos.z > 0 && screenPos.z < 1) {
+                const normX = (screenPos.x + 1) / 2; // True optical coordinates (0.0=left, 1.0=right)
+                const normY = (1 - screenPos.y) / 2; // Top-down image Y (0.0=top, 1.0=bottom)
+
+                // Estimate bounding box in 640x480 pixel space
+                const boxScale = Math.min(220, Math.max(30, 180 / dist));
+                const pixelX = Math.round(normX * 640 - boxScale / 2);
+                const pixelY = Math.round(normY * 480 - boxScale / 2);
+
+                this.detectedFlameTarget = {
+                  fireId: fire.id,
+                  confidence: Math.min(0.98, Math.max(0.65, 1.0 - (dist / 3.0) * 0.4)),
+                  x: Math.round(normX * 1000) / 1000,
+                  y: Math.round(normY * 1000) / 1000,
+                  bbox: [pixelX, pixelY, Math.round(boxScale), Math.round(boxScale * 1.2)],
+                  distanceCm: Math.round(dist * 100)
+                };
+              }
+              break;
+            }
           }
         }
       }
@@ -327,6 +336,58 @@ class SensorSimulator {
     if (predGroup && wasPredVisible) {
       predGroup.visible = true;
     }
+  }
+
+  reprojectPhysicalRays() {
+    const sensorConfigs = [
+      { key: 'front', mount: this.robot.ultrasonicMounts.front, angleOffset: 0, distCm: this.distances.front },
+      { key: 'left', mount: this.robot.ultrasonicMounts.left, angleOffset: -Math.PI / 4, distCm: this.distances.left },
+      { key: 'right', mount: this.robot.ultrasonicMounts.right, angleOffset: Math.PI / 4, distCm: this.distances.right }
+    ];
+
+    sensorConfigs.forEach((cfg) => {
+      if (!cfg.mount || !this.rayVisuals[cfg.key]) return;
+      const origin = new THREE.Vector3();
+      cfg.mount.getWorldPosition(origin);
+      const rayYaw = this.robot.yaw + cfg.angleOffset;
+      const direction = new THREE.Vector3(Math.sin(rayYaw), 0, Math.cos(rayYaw)).normalize();
+      const distMeters = Math.min(this.maxUltrasonicDistMeters, Math.max(0.04, (cfg.distCm || 0) / 100.0));
+      const vis = this.rayVisuals[cfg.key];
+      const endPoint = origin.clone().add(direction.clone().multiplyScalar(distMeters));
+      const posAttr = vis.line.geometry.attributes.position;
+      posAttr.setXYZ(0, origin.x, origin.y, origin.z);
+      posAttr.setXYZ(1, endPoint.x, endPoint.y, endPoint.z);
+      posAttr.needsUpdate = true;
+
+      if (cfg.distCm < 25.0) {
+        vis.material.color.setHex(0xff334b);
+      } else if (cfg.distCm < 40.0) {
+        vis.material.color.setHex(0xffaa00);
+      } else {
+        vis.material.color.setHex(0x00d2ff);
+      }
+    });
+  }
+
+  setFromPhysicalTelemetry(telem) {
+    if (!telem) return;
+    this.usePhysicalSensors = true;
+    this.lastPhysicalSensorTime = Date.now();
+
+    if (telem.dist_front !== undefined && telem.dist_front !== null) {
+      this.distances.front = Number(telem.dist_front);
+    }
+    if (telem.dist_left !== undefined && telem.dist_left !== null) {
+      this.distances.left = Number(telem.dist_left);
+    }
+    if (telem.dist_right !== undefined && telem.dist_right !== null) {
+      this.distances.right = Number(telem.dist_right);
+    }
+    if (telem.flame_detected !== undefined) {
+      this.flameDetected = !!telem.flame_detected;
+    }
+
+    this.reprojectPhysicalRays();
   }
 
   getTelemetry() {

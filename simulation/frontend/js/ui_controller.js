@@ -71,6 +71,10 @@ class UIController {
     this.lastPhysicalTelem = null;
     this.lastPhysicalTelemTime = 0;
 
+    this.cameraStreamEnabled = true;
+    this.activeKeys = new Set();
+    this._wasTeleopActive = false;
+
     if (typeof history !== 'undefined' && 'scrollRestoration' in history) {
       history.scrollRestoration = 'manual';
     }
@@ -78,9 +82,67 @@ class UIController {
     this.bindDomElements();
     this.bindKeyboard();
     this.initWebSocket();
+    this.initCameraStreamControls();
     this.updatePhysicalHardwareStatus(false, null, 115200);
     this.renderPiLogs();
     this.renderEspLogs();
+  }
+
+  initCameraStreamControls() {
+    this.cameraStreamEnabled = true;
+    const btn = document.getElementById('btn-toggle-cam-stream');
+    const txt = document.getElementById('stream-btn-text');
+    const streamImg = document.getElementById('dashboard-cam-mjpeg');
+    const pausedBanner = document.getElementById('dash-cam-paused-banner');
+    const offlineBanner = document.getElementById('dash-cam-offline-banner');
+
+    if (streamImg) {
+      // Reconnect watchdog if stream drops
+      streamImg.onerror = () => {
+        if (this.cameraStreamEnabled && this.activePage === 'dashboard') {
+          if (offlineBanner) offlineBanner.style.display = 'flex';
+          setTimeout(() => {
+            if (this.cameraStreamEnabled && streamImg) {
+              streamImg.src = `/video_feed?t=${Date.now()}`;
+            }
+          }, 3000);
+        }
+      };
+
+      streamImg.onload = () => {
+        if (offlineBanner && this.cameraStreamEnabled) {
+          offlineBanner.style.display = 'none';
+        }
+      };
+    }
+
+    if (btn) {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.cameraStreamEnabled = !this.cameraStreamEnabled;
+
+        if (this.cameraStreamEnabled) {
+          btn.classList.remove('paused');
+          btn.classList.add('active');
+          if (txt) txt.textContent = '📹 Stream: ON';
+          if (pausedBanner) pausedBanner.style.display = 'none';
+          if (streamImg) {
+            streamImg.src = `/video_feed?t=${Date.now()}`;
+            streamImg.style.display = 'block';
+          }
+        } else {
+          btn.classList.add('paused');
+          btn.classList.remove('active');
+          if (txt) txt.textContent = '📹 Stream: OFF';
+          if (pausedBanner) pausedBanner.style.display = 'flex';
+          if (streamImg) {
+            streamImg.src = '';
+            streamImg.style.display = 'none';
+          }
+        }
+      });
+    }
   }
 
   bindDomElements() {
@@ -112,6 +174,15 @@ class UIController {
     // Global E-Stop Button
     document.getElementById('btn-global-estop')?.addEventListener('click', () => {
       this.emergencyStop();
+    });
+
+    // FSM Mission Controls (Autonomous Patrol vs Standby IDLE)
+    document.getElementById('btn-mission-start')?.addEventListener('click', () => {
+      this.dispatchBenchCommand('start');
+    });
+
+    document.getElementById('btn-mission-pause')?.addEventListener('click', () => {
+      this.dispatchBenchCommand('pause');
     });
 
     // Terminal Pi Controls
@@ -167,7 +238,9 @@ class UIController {
     const btnDashSil = document.getElementById('btn-dash-policy-sil');
     if (btnDashNeural && btnDashSil) {
       btnDashNeural.addEventListener('click', () => {
+        this._userExplicitSyncMode = true;
         this.syncMode = 'neural';
+        if (this.sensors) this.sensors.usePhysicalSensors = false;
         btnDashNeural.style.background = 'var(--accent-cyan)';
         btnDashNeural.style.color = '#000';
         btnDashSil.style.background = 'rgba(255,255,255,0.05)';
@@ -178,7 +251,9 @@ class UIController {
       });
 
       btnDashSil.addEventListener('click', () => {
+        this._userExplicitSyncMode = true;
         this.syncMode = 'sil';
+        if (this.sensors) this.sensors.usePhysicalSensors = false;
         btnDashSil.style.background = 'var(--accent-cyan)';
         btnDashSil.style.color = '#000';
         btnDashNeural.style.background = 'rgba(255,255,255,0.05)';
@@ -411,9 +486,13 @@ class UIController {
     const sim2hwGroup = document.getElementById('sim2hw-policy-group');
     document.querySelectorAll('.mode-radio').forEach((radio) => {
       radio.addEventListener('click', () => {
+        this._userExplicitSyncMode = true;
         document.querySelectorAll('.mode-radio').forEach(r => r.classList.remove('selected'));
         radio.classList.add('selected');
         this.syncMode = radio.dataset.mode;
+        if (this.syncMode !== 'hw2sim' && this.sensors) {
+          this.sensors.usePhysicalSensors = false;
+        }
         if (sim2hwGroup) {
           sim2hwGroup.style.display = (this.syncMode === 'sim2hw') ? 'block' : 'none';
         }
@@ -521,7 +600,8 @@ class UIController {
   }
 
   initWebSocket() {
-    const wsPort = 8765;
+    const urlParams = new URLSearchParams(window.location.search);
+    const wsPort = urlParams.get('ws_port') || window.WS_PORT || 8765;
     const host = window.location.hostname || 'localhost';
     const wsUrl = `ws://${host}:${wsPort}/ws/telemetry`;
     try {
@@ -606,6 +686,62 @@ class UIController {
       return;
     }
 
+    // ESP32 Boot Beacon Handshake Handling
+    if (data.type === 'ESP32_BOOT' || (data.state && data.state === 'WAITING_FOR_PI')) {
+      const bootPkt = {
+        is_physical: true,
+        robot_state: 'WAITING_FOR_PI',
+        left_pwm: 0,
+        right_pwm: 0,
+        tilt_angle: 90,
+        dist_front: 0,
+        dist_left: 0,
+        dist_right: 0,
+        flame_detected: false,
+        solenoid_active: false
+      };
+      this.lastPhysicalTelem = bootPkt;
+      this.lastPhysicalTelemTime = Date.now();
+      if (!this.physicalHardwareConnected) {
+        this.physicalHardwareConnected = true;
+        this.updatePhysicalHardwareStatus(true, this.physicalHardwarePort || 'Raspberry Pi 3B (/dev/serial0)', this.physicalHardwareBaud);
+      }
+      this.updateDashboardHud(0.016, bootPkt);
+      this.appendEspLog({
+        source: 'BOOT',
+        level: 'INFO',
+        message: '⚡ ESP32 Booted: Waiting for Raspberry Pi 3B Linux boot & vision ready...',
+        timestamp: Date.now() / 1000
+      });
+      return;
+    }
+
+    // ESP32 Handshake Confirmation
+    if (data.type === 'ESP32_ACK') {
+      const ackPkt = {
+        is_physical: true,
+        robot_state: data.new_state || 'IDLE',
+        left_pwm: 0,
+        right_pwm: 0,
+        tilt_angle: 90,
+        dist_front: 0,
+        dist_left: 0,
+        dist_right: 0,
+        flame_detected: false,
+        solenoid_active: false
+      };
+      this.lastPhysicalTelem = ackPkt;
+      this.lastPhysicalTelemTime = Date.now();
+      this.updateDashboardHud(0.016, ackPkt);
+      this.appendEspLog({
+        source: 'HANDSHAKE',
+        level: 'INFO',
+        message: `🤝 Handshake confirmed! Robot entered ${data.new_state || 'IDLE'} safe standby.`,
+        timestamp: Date.now() / 1000
+      });
+      return;
+    }
+
     // Physical Hardware Telemetry: ONLY ingest real physical packets for the dashboard
     if (data.is_physical === true) {
       this.lastPhysicalTelem = data;
@@ -616,16 +752,48 @@ class UIController {
       }
       this.updateDashboardHud(0.016, data);
       this.updateDashboardCamera(0.016, data);
+
+      // Auto-activate Hardware ➔ Simulation Digital Twin mode on hardware connection (unless user picked a different mode)
+      if (!this._userExplicitSyncMode && this.syncMode !== 'hw2sim') {
+        this.syncMode = 'hw2sim';
+        document.querySelectorAll('.mode-radio').forEach(r => {
+          r.classList.toggle('selected', r.dataset.mode === 'hw2sim');
+        });
+        const sim2hwGroup = document.getElementById('sim2hw-policy-group');
+        if (sim2hwGroup) sim2hwGroup.style.display = 'none';
+        console.log('[Digital Twin] Physical hardware connected -> Auto-activated hw2sim Digital Twin Mode');
+      }
     }
 
-    if (this.syncMode === 'hw2sim') {
-      // Physical ESP32 drives the simulated robot!
-      if (data.robot_state) this.robotState = data.robot_state;
-      if (data.tilt_angle !== undefined) this.robot.setTiltAngle(data.tilt_angle);
-      if (data.solenoid_active !== undefined) this.robot.solenoidActive = data.solenoid_active;
-      if (data.left_pwm !== undefined && data.right_pwm !== undefined) {
-        this.robot.setMotorPwm(data.left_pwm, data.right_pwm);
+    if (this.syncMode === 'hw2sim' && (data.is_physical === true || data.robot_state)) {
+      // Physical ESP32 drives the simulated robot twin!
+      if (data.robot_state) {
+        this.robotState = data.robot_state;
+        const topStateBadge = document.getElementById('hud-state-badge');
+        if (topStateBadge) {
+          const st = data.robot_state.replace(/_/g, ' ');
+          topStateBadge.textContent = st;
+          topStateBadge.className = `state-badge ${data.robot_state.toLowerCase()}`;
+        }
       }
+      if (data.tilt_angle !== undefined) this.robot.setTiltAngle(data.tilt_angle);
+      if (data.solenoid_active !== undefined) this.robot.solenoidActive = !!data.solenoid_active;
+      if (data.left_pwm !== undefined && data.right_pwm !== undefined) {
+        if (!this.activeKeys || this.activeKeys.size === 0) {
+          this.robot.setMotorPwm(data.left_pwm, data.right_pwm);
+        }
+      }
+      if (this.sensors) {
+        this.sensors.setFromPhysicalTelemetry(data);
+      }
+      // Keep tactical radar mapper in sync with real physical distances
+      this.updateRadarMap({
+        dist_front: data.dist_front,
+        dist_left: data.dist_left,
+        dist_right: data.dist_right,
+        flame_detected: !!data.flame_detected,
+        target: this.realVisionTarget || null
+      });
     }
   }
 
@@ -762,6 +930,19 @@ class UIController {
       this.updatePhysicalHardwareStatus(false, null, 115200);
     }
 
+    // Allow teleop keyboard controls while on the operations dashboard
+    if (this.activeKeys.size > 0) {
+      this._wasTeleopActive = true;
+      this.handleTeleopControls();
+      const telem = this.sensors.getTelemetry();
+      this.broadcastTelemetry(telem);
+    } else if (this._wasTeleopActive) {
+      this._wasTeleopActive = false;
+      this.handleTeleopControls();
+      const telem = this.sensors.getTelemetry();
+      this.broadcastTelemetry(telem);
+    }
+
     if (this.physicalHardwareConnected && this.lastPhysicalTelem) {
       this.updateDashboardHud(dt, this.lastPhysicalTelem);
       this.updateDashboardCamera(dt, this.lastPhysicalTelem);
@@ -784,14 +965,28 @@ class UIController {
     const w = canvas.width;
     const h = canvas.height;
 
-    // 1. Manage Live Physical Webcam Stream vs Virtual Simulation Camera
+    // 1. Manage Live Physical Webcam Stream vs Virtual Simulation Camera vs Paused
     const streamImg = document.getElementById('dashboard-cam-mjpeg');
     const offlineBanner = document.getElementById('dash-cam-offline-banner');
+    const pausedBanner = document.getElementById('dash-cam-paused-banner');
     const srcBadge = document.getElementById('vision-cam-source-badge');
     const isLiveCam = !!(this.latestCameraStatus && this.latestCameraStatus.connected);
 
     if (this.activePage === 'dashboard') {
-      if (isLiveCam) {
+      if (!this.cameraStreamEnabled) {
+        // Bandwidth Saving Mode (Wi-Fi packets stopped)
+        if (streamImg) streamImg.style.display = 'none';
+        if (offlineBanner) offlineBanner.style.display = 'none';
+        if (pausedBanner) pausedBanner.style.display = 'flex';
+        ctx.fillStyle = '#060a12';
+        ctx.fillRect(0, 0, w, h);
+        if (srcBadge) {
+          srcBadge.textContent = '⏸️ STREAM PAUSED';
+          srcBadge.style.color = 'var(--accent-yellow)';
+          srcBadge.style.background = 'rgba(255, 214, 0, 0.15)';
+        }
+      } else if (isLiveCam) {
+        if (pausedBanner) pausedBanner.style.display = 'none';
         if (streamImg) streamImg.style.display = 'block';
         if (offlineBanner) offlineBanner.style.display = 'none';
         // Clear canvas so the underlying hardware video stream shows through
@@ -802,6 +997,7 @@ class UIController {
           srcBadge.style.background = 'rgba(0, 230, 118, 0.15)';
         }
       } else {
+        if (pausedBanner) pausedBanner.style.display = 'none';
         if (streamImg) streamImg.style.display = 'none';
         if (offlineBanner) offlineBanner.style.display = 'flex';
         ctx.fillStyle = '#060a12';
@@ -816,6 +1012,7 @@ class UIController {
       // In Simulation View Mode: Hide physical stream image and draw 3D pipCanvas
       if (streamImg) streamImg.style.display = 'none';
       if (offlineBanner) offlineBanner.style.display = 'none';
+      if (pausedBanner) pausedBanner.style.display = 'none';
       if (srcBadge) {
         srcBadge.textContent = '🎮 VIRTUAL SIM';
         srcBadge.style.color = 'var(--accent-cyan)';
@@ -869,23 +1066,26 @@ class UIController {
     const confTagEl = document.getElementById('dash-vision-bbox-conf');
 
     const camTarget = this.latestCameraStatus ? this.latestCameraStatus.target : null;
-    const hasFlame = (telem ? !!telem.flame_detected : false) || 
-                     (this.latestCameraStatus ? !!this.latestCameraStatus.flame_detected : false) ||
-                     (this.realVisionTarget && this.realVisionTarget.isConfirmed);
+    // Physical LM393 Optical IR sensor from ESP32:
+    const irTriggered = telem ? !!telem.flame_detected : false;
+    // Optical vision flame lock (confirmed by vision model / simulation target):
+    const visualFlameLocked = !!(this.latestCameraStatus && this.latestCameraStatus.flame_detected && camTarget) ||
+                             !!(this.realVisionTarget && this.realVisionTarget.isConfirmed);
+
     const standoffM = telem ? (telem.dist_front / 100).toFixed(2) : '--';
 
     if (pitchEl) pitchEl.textContent = `${Math.round(tilt)}°`;
     if (irEl) {
-      irEl.textContent = hasFlame ? 'DETECTED' : 'CLEAR';
-      irEl.style.color = hasFlame ? 'var(--accent-red)' : 'var(--accent-green)';
+      irEl.textContent = irTriggered ? 'DETECTED' : 'CLEAR';
+      irEl.style.color = irTriggered ? 'var(--accent-red)' : 'var(--accent-green)';
     }
     if (standoffEl) standoffEl.textContent = standoffM !== '--' ? `${standoffM} m` : '-- m';
     if (confEl) {
-      const confVal = camTarget ? Math.round(camTarget.confidence * 100) : (hasFlame ? 100 : 0);
+      const confVal = (camTarget && visualFlameLocked) ? Math.round(camTarget.confidence * 100) : 0;
       confEl.textContent = `${confVal}%`;
     }
 
-    if (hasFlame) {
+    if (visualFlameLocked) {
       if (badgeEl) {
         badgeEl.textContent = '🔥 FLAME LOCK';
         badgeEl.style.background = 'rgba(255, 51, 75, 0.2)';
@@ -922,7 +1122,6 @@ class UIController {
           if (confTagEl) confTagEl.textContent = '100%';
         }
       }
-      if (confTagEl) confTagEl.textContent = '100%';
     } else {
       if (badgeEl) {
         badgeEl.textContent = 'PATROL SCAN';
@@ -934,8 +1133,13 @@ class UIController {
         lockPill.style.color = 'var(--accent-yellow)';
       }
       if (statusLineEl) {
-        statusLineEl.textContent = 'AI VISION SENSOR: OPTICAL SCANNING SECTOR';
-        statusLineEl.style.color = 'var(--accent-cyan)';
+        if (!this.cameraStreamEnabled) {
+          statusLineEl.textContent = 'AI VISION STREAM: PAUSED (BANDWIDTH SAVING MODE)';
+          statusLineEl.style.color = 'var(--accent-yellow)';
+        } else {
+          statusLineEl.textContent = 'AI VISION SENSOR: OPTICAL SCANNING SECTOR';
+          statusLineEl.style.color = 'var(--accent-cyan)';
+        }
       }
       if (crosshairEl) crosshairEl.classList.remove('locked');
       if (bboxEl) bboxEl.style.display = 'none';
@@ -1029,6 +1233,11 @@ class UIController {
    */
   broadcastTelemetry(telem) {
     if (this.wsConnected && this.socket && this.socket.readyState === WebSocket.OPEN) {
+      if (this.syncMode === 'hw2sim' && this.activeKeys.size === 0 && !this._wasTeleopActive) {
+        // In HW2SIM mode with no teleop keys held, physical hardware is the primary source of truth.
+        // Do not broadcast virtual telemetry back to avoid fighting physical motors.
+        return;
+      }
       telem.sync_mode = this.syncMode;
       telem.robot_state = this.robotState;
       this.socket.send(JSON.stringify(telem));
@@ -1060,6 +1269,16 @@ class UIController {
       } else if (this.sim2hwPolicy === 'sil') {
         this.runAutonomousSilFsm(dt, telem);
       } else {
+        this.handleTeleopControls();
+      }
+    } else if (this.syncMode === 'hw2sim') {
+      // In HW2SIM mode, physical ESP32 drives the virtual twin.
+      // If user holds teleop keys, send commands and track when released:
+      if (this.activeKeys.size > 0) {
+        this._wasTeleopActive = true;
+        this.handleTeleopControls();
+      } else if (this._wasTeleopActive) {
+        this._wasTeleopActive = false;
         this.handleTeleopControls();
       }
     }
@@ -2225,7 +2444,35 @@ class UIController {
     }
 
     // Direct local simulation responses
-    if (cmd === 'w') {
+    if (cmd === 'start') {
+      this.robotState = 'SEARCHING';
+      this.scanPhase = 'SWEEP';
+      this.phaseTimer = 0;
+      this.stateTimer = 0;
+      const topStateBadge = document.getElementById('hud-state-badge');
+      if (topStateBadge) {
+        topStateBadge.textContent = 'SEARCHING';
+        topStateBadge.className = 'state-badge searching';
+      }
+    } else if (cmd === 'pause' || cmd === 'idle' || cmd === 'stop') {
+      this.robotState = 'IDLE';
+      this.robot.setMotorPwm(0, 0);
+      this.robot.solenoidActive = false;
+      const topStateBadge = document.getElementById('hud-state-badge');
+      if (topStateBadge) {
+        topStateBadge.textContent = 'IDLE (STANDBY)';
+        topStateBadge.className = 'state-badge idle';
+      }
+    } else if (cmd === 'handshake' || cmd === 'ready') {
+      if (this.robotState === 'WAITING_FOR_PI' || !this.physicalHardwareConnected) {
+        this.robotState = 'IDLE';
+        const topStateBadge = document.getElementById('hud-state-badge');
+        if (topStateBadge) {
+          topStateBadge.textContent = 'IDLE (STANDBY)';
+          topStateBadge.className = 'state-badge idle';
+        }
+      }
+    } else if (cmd === 'w') {
       this.robot.setMotorPwm(150, 150);
       setTimeout(() => { if (this.robotState !== 'SEARCHING') this.robot.setMotorPwm(0, 0); }, 1000);
     } else if (cmd === 's') {
@@ -2247,6 +2494,17 @@ class UIController {
       this.robot.setTiltAngle(45);
       setTimeout(() => this.robot.setTiltAngle(135), 400);
       setTimeout(() => this.robot.setTiltAngle(90), 800);
+    } else if (cmd === 'u') {
+      const cur = this.robot.tiltAngleDeg || 90;
+      this.robot.setTiltAngle(Math.min(135, cur + 10));
+    } else if (cmd === 'j') {
+      const cur = this.robot.tiltAngleDeg || 90;
+      this.robot.setTiltAngle(Math.max(45, cur - 10));
+    } else if (cmd === 'h') {
+      this.robot.setTiltAngle(90);
+    } else if (cmd.startsWith('tilt ') || cmd.startsWith('TILT ')) {
+      const deg = parseInt(cmd.substring(5), 10);
+      if (!isNaN(deg)) this.robot.setTiltAngle(deg);
     } else if (cmd === 'sim') {
       const fwd = new THREE.Vector3(Math.sin(this.robot.yaw), 0, Math.cos(this.robot.yaw));
       const pos = this.robot.position.clone().add(fwd.multiplyScalar(1.5));
@@ -2478,8 +2736,15 @@ class UIController {
     // 1. KPI Cards
     const kpiState = document.getElementById('kpi-robot-state');
     if (kpiState) {
-      kpiState.textContent = (telem.robot_state || 'ONLINE').replace(/_/g, ' ');
-      kpiState.style.color = 'var(--accent-cyan)';
+      const stateStr = (telem.robot_state || 'ONLINE').replace(/_/g, ' ');
+      kpiState.textContent = stateStr;
+      if (telem.robot_state === 'WAITING_FOR_PI') {
+        kpiState.style.color = 'var(--accent-yellow)';
+      } else if (telem.robot_state === 'IDLE') {
+        kpiState.style.color = 'var(--accent-cyan)';
+      } else {
+        kpiState.style.color = 'var(--accent-green)';
+      }
     }
 
     const kpiMode = document.getElementById('kpi-sync-mode');
@@ -2500,25 +2765,31 @@ class UIController {
       }
     }
 
-    const hasFire = !!(telem.flame_detected);
+    const camConfirmed = !!(this.latestCameraStatus && this.latestCameraStatus.flame_detected);
     const kpiThreat = document.getElementById('kpi-fire-threat');
     const kpiThreatCard = document.getElementById('kpi-card-fire');
+    const kpiConf = document.getElementById('kpi-fire-conf');
 
     if (kpiThreat && kpiThreatCard) {
-      if (hasFire) {
-        kpiThreat.textContent = '🔥 FLAME DETECTED';
+      if (camConfirmed) {
+        kpiThreat.textContent = '🔥 FLAME LOCKED';
         kpiThreat.style.color = 'var(--accent-red)';
         kpiThreatCard.className = 'kpi-card danger';
+        if (kpiConf) {
+          const c = this.latestCameraStatus.target ? Math.round(this.latestCameraStatus.target.confidence * 100) : 95;
+          kpiConf.textContent = `${c}%`;
+        }
+      } else if (telem.flame_detected) {
+        kpiThreat.textContent = '⚠️ IR SENSOR TRIP';
+        kpiThreat.style.color = 'var(--accent-orange)';
+        kpiThreatCard.className = 'kpi-card';
+        if (kpiConf) kpiConf.textContent = '50%';
       } else {
         kpiThreat.textContent = 'CLEAR';
         kpiThreat.style.color = 'var(--accent-green)';
         kpiThreatCard.className = 'kpi-card success';
+        if (kpiConf) kpiConf.textContent = '0%';
       }
-    }
-
-    const kpiConf = document.getElementById('kpi-fire-conf');
-    if (kpiConf) {
-      kpiConf.textContent = hasFire ? '100%' : '0%';
     }
 
     const kpiDist = document.getElementById('kpi-standoff-dist');

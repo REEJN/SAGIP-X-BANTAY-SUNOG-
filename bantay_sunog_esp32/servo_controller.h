@@ -5,45 +5,49 @@
 #include "config.h"
 
 /**
- * Tilt Servo Controller for the Y-Axis assembly.
- * Directly tilts the USB Webcam, Extinguisher Nozzle, and IR Flame Sensor.
+ * Dual Servo Controller:
+ * 1. Tilt Servo (TowerPro MG90S on GPIO 13): Tilts webcam, co-axial turret, and IR flame sensor.
+ * 2. Extinguisher Trigger Servo (TowerPro MG996R on GPIO 23): Mechanically depresses fire extinguisher can lever.
  */
 class ServoController {
 public:
     ServoController();
 
     /**
-     * Attach servo to GPIO pin and drive to neutral horizon position.
+     * Attach servos to GPIO pins and initialize to neutral/idle positions.
      */
     void begin();
 
     /**
-     * Set target angle directly in degrees (clamped to [SERVO_TILT_MIN, SERVO_TILT_MAX]).
+     * Periodic watchdog check (auto-releases trigger servo if max burst exceeded).
      */
+    void update();
+
+    // -------------------------------------------------------------------------
+    // Tilt Servo (Pitch Gimbal)
+    // -------------------------------------------------------------------------
     void setAngle(int angleDeg);
-
-    /**
-     * Adjust pitch based on normalized optical target coordinate Y (0.0 to 1.0).
-     * @param targetY Normalized vertical coordinate (0.5 = optical center).
-     * @return True if target is within Y_ALIGN_TOLERANCE, False otherwise.
-     */
     bool adjustPitch(float targetY);
-
-    /**
-     * Gentle vertical sweep to scan the room when in search mode.
-     */
     void updateSearchSweep();
-
-    /**
-     * Reset servo to home position (90 degrees).
-     */
     void home();
-
     int getAngle() const { return _currentAngle; }
 
+    // -------------------------------------------------------------------------
+    // Extinguisher Canister Mechanical Trigger Servo (MG996R on GPIO 23)
+    // -------------------------------------------------------------------------
+    void triggerExtinguisher();
+    void releaseExtinguisher();
+    bool isExtinguisherActive() const { return _triggerActive; }
+    uint32_t getExtinguisherElapsedMs() const;
+
 private:
-    Servo _servo;
+    Servo _tiltServo;
+    Servo _triggerServo;
+
     int _currentAngle;
     int _sweepDirection;
     uint32_t _lastSweepMs;
+
+    bool _triggerActive;
+    uint32_t _triggerStartTimeMs;
 };

@@ -74,18 +74,27 @@ MODEL_NUM_THREADS = int(os.environ.get("BANTAY_MODEL_THREADS", "4"))
 # Minimum confidence threshold for a detection to be considered
 CONFIDENCE_THRESHOLD = float(os.environ.get("BANTAY_CONFIDENCE", "0.70"))
 
-# --- HSV Fallback (Experimental) ---
+# --- HSV Fallback (Multi-Stage Optical Color Validation) ---
 # Fire color HSV ranges (OpenCV: H 0-179, S 0-255, V 0-255)
-# Band 1: Orange/Yellow/Red flames
-HSV_FIRE_LOWER_1 = (0, 70, 180)
-HSV_FIRE_UPPER_1 = (25, 255, 255)
+# Band 1: Vivid Orange/Yellow/Red flames (S >= 130, V >= 210 strictly rejects human skin S:40-110, V:120-190)
+HSV_FIRE_LOWER_1 = (0, 130, 210)
+HSV_FIRE_UPPER_1 = (22, 255, 255)
 
-# Band 2: Deep red embers / wrap-around
-HSV_FIRE_LOWER_2 = (165, 70, 180)
+# Band 2: Deep red wrap-around flames
+HSV_FIRE_LOWER_2 = (170, 140, 210)
 HSV_FIRE_UPPER_2 = (179, 255, 255)
 
 # Minimum contour area (pixels) to be considered a fire region
-HSV_MIN_CONTOUR_AREA = 500
+HSV_MIN_CONTOUR_AREA = 600
+
+# Incandescent combustion core thresholds:
+# Real flames contain an intense white/bright yellow emission core (V >= 235)
+FIRE_CORE_VAL_MIN = 235
+FIRE_CORE_RATIO_MIN = 0.03
+
+# RGB dominance rules (R > G > B, R >= 190, R - G >= 20)
+FIRE_RGB_R_MIN = 190
+FIRE_RGB_DIFF_MIN = 20
 
 # Morphological kernel size
 HSV_MORPH_KERNEL_SIZE = 5

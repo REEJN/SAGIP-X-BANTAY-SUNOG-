@@ -4,16 +4,16 @@
 #include "config.h"
 
 /**
- * Sensor and Actuator Manager.
- * Orchestrates Front/Left/Right Ultrasonic distance sensors,
- * physical IR flame sensor validation, and suppression solenoid valve timing.
+ * Sensor Manager.
+ * Orchestrates Front/Left/Right Ultrasonic distance sensors
+ * and physical IR flame sensor validation.
  */
 class SensorManager {
 public:
     SensorManager();
 
     /**
-     * Configure sensor and solenoid GPIOs.
+     * Configure sensor GPIOs.
      */
     void begin();
 
@@ -35,12 +35,6 @@ public:
     // Physical Flame Sensor
     bool isFlameDetected() const;
 
-    // Fire Extinguisher Solenoid Valve Control
-    void activateSolenoid();
-    void deactivateSolenoid();
-    bool isSolenoidActive() const { return _solenoidActive; }
-    uint32_t getSolenoidElapsedMs() const;
-
 private:
     float _measureDistanceCm(uint8_t trigPin, uint8_t echoPin);
 
@@ -50,7 +44,4 @@ private:
 
     uint8_t _activeSensorIndex;
     uint32_t _lastSensorPollMs;
-
-    bool _solenoidActive;
-    uint32_t _solenoidStartTimeMs;
 };

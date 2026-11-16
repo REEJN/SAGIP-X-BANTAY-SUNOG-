@@ -128,6 +128,17 @@ async def broadcast_to_clients(data_str: str):
         connected_clients.discard(d)
 
 
+def enhance_frame_color(frame, sat_mult=1.65, contrast=1.18, brightness=8):
+    """Bumps up color saturation and contrast to eliminate grayish/null camera output."""
+    try:
+        adjusted = cv2.convertScaleAbs(frame, alpha=contrast, beta=brightness)
+        hsv = cv2.cvtColor(adjusted, cv2.COLOR_BGR2HSV)
+        hsv[:, :, 1] = cv2.multiply(hsv[:, :, 1], sat_mult)
+        return cv2.cvtColor(hsv, cv2.COLOR_HSV2BGR)
+    except Exception:
+        return frame
+
+
 def camera_capture_worker():
     """Continuously captures frames from USB webcam at stable 10 FPS with zero glitching or tearing."""
     global latest_jpeg_frame, frame_id, camera_status
@@ -148,8 +159,8 @@ def camera_capture_worker():
             if cap is None or not cap.isOpened():
                 camera_status["connected"] = False
                 for dev in ["/dev/video0", 0, "/dev/video1", 1]:
-                    # Prefer MJPG for hardware compression (reduces USB bus traffic by 95% & prevents tearing)
-                    for fmt in ["MJPG", "YUYV"]:
+                    # Try YUYV first to eliminate Generalplus corrupt JPEG padding bytes, fallback to MJPG
+                    for fmt in ["YUYV", "MJPG"]:
                         try:
                             c = cv2.VideoCapture(dev, cv2.CAP_V4L2)
                             if c.isOpened():
@@ -158,6 +169,11 @@ def camera_capture_worker():
                                 c.set(cv2.CAP_PROP_FRAME_HEIGHT, 360)
                                 c.set(cv2.CAP_PROP_FPS, CAMERA_FPS)
                                 c.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+                                try:
+                                    c.set(cv2.CAP_PROP_CONTRAST, 36)
+                                    c.set(cv2.CAP_PROP_BRIGHTNESS, 28)
+                                except Exception:
+                                    pass
                                 test_ret, _ = c.read()
                                 if test_ret:
                                     cap = c
@@ -190,6 +206,9 @@ def camera_capture_worker():
                 time.sleep(1.0)
                 continue
 
+            # 2b. Enhance frame color (boost saturation, contrast, and warmth)
+            frame = enhance_frame_color(frame)
+
             # 3. FPS calculation
             frame_count += 1
             elapsed = time.time() - fps_start
@@ -205,12 +224,14 @@ def camera_capture_worker():
                     detections = fire_detector.detect(frame)
                     if confirmation_tracker is not None:
                         state, _, best_det = confirmation_tracker.update(detections)
-                        if best_det is not None:
+                        is_confirmed = (state == config.DetectionState.FIRE_CONFIRMED)
+                        if best_det is not None and is_confirmed:
                             best_target = {
                                 "x": round(best_det.normalized_x, 3),
                                 "y": round(best_det.normalized_y, 3),
                                 "confidence": round(best_det.confidence, 2),
-                                "bbox": [best_det.x, best_det.y, best_det.width, best_det.height]
+                                "bbox": [best_det.x, best_det.y, best_det.width, best_det.height],
+                                "confirmed": True
                             }
                             camera_status["flame_detected"] = True
                             camera_status["target"] = best_target
@@ -220,8 +241,8 @@ def camera_capture_worker():
                 except Exception:
                     pass
 
-            # 5. Draw detection overlay onto live frame if flame detected
-            if best_target and "bbox" in best_target:
+            # 5. Draw detection overlay onto live frame only if flame confirmed
+            if best_target and best_target.get("confirmed") and "bbox" in best_target:
                 bx, by, bw, bh = best_target["bbox"]
                 cv2.rectangle(frame, (bx, by), (bx + bw, by + bh), (0, 0, 255), 2)
                 tag = f"FLAME {int(best_target['confidence'] * 100)}%"
@@ -326,12 +347,38 @@ async def uart_reader_task():
                 })
                 await broadcast_to_clients(log_pkt)
 
+                # Dispatch PI_READY handshake packet to ESP32
+                handshake_pkt = json.dumps({
+                    "type": "PI_READY",
+                    "status": "OK",
+                    "camera": camera_status["connected"],
+                    "fps": CAMERA_FPS,
+                    "model": "HSV_Fallback"
+                }) + "\n"
+                ser_conn.write(handshake_pkt.encode("utf-8"))
+                ser_conn.flush()
+                print("[UART] Transmitted initial PI_READY handshake to ESP32.")
+
             loop = asyncio.get_running_loop()
             line = await loop.run_in_executor(None, ser_conn.readline)
             if line:
                 decoded = line.decode("utf-8", errors="replace").strip()
                 if decoded:
                     last_esp_packet_time = time.time()
+
+                    # Answer ESP32 boot beacon if it's waiting for Pi boot completion
+                    if "WAITING_FOR_PI" in decoded or "ESP32_BOOT" in decoded:
+                        print("[HANDSHAKE] ESP32 boot beacon detected. Answering with PI_READY...")
+                        hs_reply = json.dumps({
+                            "type": "PI_READY",
+                            "status": "OK",
+                            "camera": camera_status["connected"],
+                            "fps": CAMERA_FPS,
+                            "model": "HSV_Fallback"
+                        }) + "\n"
+                        ser_conn.write(hs_reply.encode("utf-8"))
+                        ser_conn.flush()
+
                     if decoded.startswith("{") and decoded.endswith("}"):
                         await broadcast_to_clients(decoded)
                     else:

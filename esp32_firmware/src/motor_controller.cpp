@@ -91,14 +91,19 @@ void MotorController::stop() {
 
 void MotorController::_setLeftMotor(int speed) {
     _currentLeftPwm = speed;
-    if (speed > 0) {
+    int driveSpeed = speed;
+#if INVERT_LEFT_MOTOR
+    driveSpeed = -driveSpeed;
+#endif
+
+    if (driveSpeed > 0) {
         digitalWrite(PIN_MOTOR_AIN1, HIGH);
         digitalWrite(PIN_MOTOR_AIN2, LOW);
-        _writeLeftPwm((uint8_t)constrain(speed, 0, 255));
-    } else if (speed < 0) {
+        _writeLeftPwm((uint8_t)constrain(driveSpeed, 0, 255));
+    } else if (driveSpeed < 0) {
         digitalWrite(PIN_MOTOR_AIN1, LOW);
         digitalWrite(PIN_MOTOR_AIN2, HIGH);
-        _writeLeftPwm((uint8_t)constrain(-speed, 0, 255));
+        _writeLeftPwm((uint8_t)constrain(-driveSpeed, 0, 255));
     } else {
         // Coast / Stop
         digitalWrite(PIN_MOTOR_AIN1, LOW);
@@ -109,14 +114,19 @@ void MotorController::_setLeftMotor(int speed) {
 
 void MotorController::_setRightMotor(int speed) {
     _currentRightPwm = speed;
-    if (speed > 0) {
+    int driveSpeed = speed;
+#if INVERT_RIGHT_MOTOR
+    driveSpeed = -driveSpeed;
+#endif
+
+    if (driveSpeed > 0) {
         digitalWrite(PIN_MOTOR_BIN1, HIGH);
         digitalWrite(PIN_MOTOR_BIN2, LOW);
-        _writeRightPwm((uint8_t)constrain(speed, 0, 255));
-    } else if (speed < 0) {
+        _writeRightPwm((uint8_t)constrain(driveSpeed, 0, 255));
+    } else if (driveSpeed < 0) {
         digitalWrite(PIN_MOTOR_BIN1, LOW);
         digitalWrite(PIN_MOTOR_BIN2, HIGH);
-        _writeRightPwm((uint8_t)constrain(-speed, 0, 255));
+        _writeRightPwm((uint8_t)constrain(-driveSpeed, 0, 255));
     } else {
         // Coast / Stop
         digitalWrite(PIN_MOTOR_BIN1, LOW);

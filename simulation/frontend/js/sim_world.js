@@ -385,8 +385,8 @@ class SimWorld {
     this.renderer.setSize(width, height);
   }
 
-  update() {
-    const dt = Math.min(this.clock.getDelta(), 0.05);
+  update(customDt) {
+    const dt = (customDt !== undefined && customDt > 0) ? customDt : Math.min(this.clock.getDelta(), 0.05);
 
     // 1. Update Robot Kinematics & Collisions (Pass rectangular arena bounds & obstacles + fire hitboxes)
     const fireHitboxes = (this.fireSystem && this.fireSystem.getHitboxMeshes)

@@ -2,8 +2,7 @@
 
 SensorManager::SensorManager()
     : _distFront(100.0f), _distLeft(100.0f), _distRight(100.0f),
-      _activeSensorIndex(0), _lastSensorPollMs(0),
-      _solenoidActive(false), _solenoidStartTimeMs(0) {}
+      _activeSensorIndex(0), _lastSensorPollMs(0) {}
 
 void SensorManager::begin() {
     // Ultrasonic Trigger pins (Outputs)
@@ -22,23 +21,12 @@ void SensorManager::begin() {
 
     // Hardware IR Flame Sensor (Input)
     pinMode(PIN_FLAME_DO, INPUT);
-
-    // Solenoid Valve Trigger (Output)
-    pinMode(PIN_SOLENOID, OUTPUT);
-    deactivateSolenoid();
 }
 
 void SensorManager::update() {
     uint32_t now = millis();
 
-    // 1. Solenoid automatic safety timeout watchdog
-    if (_solenoidActive) {
-        if ((now - _solenoidStartTimeMs) >= SOLENOID_MAX_DURATION_MS) {
-            deactivateSolenoid();
-        }
-    }
-
-    // 2. Ultrasonic round-robin sampling (prevents echo crosstalk between sensors)
+    // Ultrasonic round-robin sampling (prevents echo crosstalk between sensors)
     if (now - _lastSensorPollMs >= SENSOR_READ_INTERVAL_MS) {
         _lastSensorPollMs = now;
 
@@ -95,21 +83,4 @@ bool SensorManager::isFlameDetected() const {
     } else {
         return rawVal == HIGH;
     }
-}
-
-void SensorManager::activateSolenoid() {
-    _solenoidActive = true;
-    _solenoidStartTimeMs = millis();
-    digitalWrite(PIN_SOLENOID, SOLENOID_ACTIVE_HIGH ? HIGH : LOW);
-}
-
-void SensorManager::deactivateSolenoid() {
-    _solenoidActive = false;
-    _solenoidStartTimeMs = 0;
-    digitalWrite(PIN_SOLENOID, SOLENOID_ACTIVE_HIGH ? LOW : HIGH);
-}
-
-uint32_t SensorManager::getSolenoidElapsedMs() const {
-    if (!_solenoidActive) return 0;
-    return millis() - _solenoidStartTimeMs;
 }

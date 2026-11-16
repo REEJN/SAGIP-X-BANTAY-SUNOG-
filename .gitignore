@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.py[cod]
 *.class
 *.log
@@ -7,3 +7,8 @@
 .idea/
 *.swp
 *.bak
+build/
+*.bin
+*.elf
+*.map
+.pio/

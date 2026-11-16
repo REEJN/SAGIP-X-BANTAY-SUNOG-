@@ -35,6 +35,26 @@ bool TelemetryParser::update() {
 }
 
 void TelemetryParser::_parseJsonLine(const char* line) {
+    // Check for raw text commands first (resilient fallback)
+    if (strncmp(line, "START_PATROL", 12) == 0 || strncmp(line, "START", 5) == 0) {
+        _currentTarget.event = EVENT_START_PATROL;
+        _currentTarget.last_update_ms = millis();
+        _newMsgParsed = true;
+        return;
+    }
+    if (strncmp(line, "PAUSE", 5) == 0 || strncmp(line, "IDLE", 4) == 0 || strncmp(line, "STANDBY", 7) == 0) {
+        _currentTarget.event = EVENT_PAUSE_STANDBY;
+        _currentTarget.last_update_ms = millis();
+        _newMsgParsed = true;
+        return;
+    }
+    if (strncmp(line, "PI_READY", 8) == 0) {
+        _currentTarget.event = EVENT_PI_READY;
+        _currentTarget.last_update_ms = millis();
+        _newMsgParsed = true;
+        return;
+    }
+
 #if ARDUINOJSON_VERSION_MAJOR >= 7
     JsonDocument doc;
 #else
@@ -47,12 +67,33 @@ void TelemetryParser::_parseJsonLine(const char* line) {
         return;
     }
 
+    uint32_t now = millis();
+
+    // Check type or cmd fields for handshake/mission control
+    const char* typeStr = doc["type"] | doc["cmd"] | "";
+    if (strcmp(typeStr, "PI_READY") == 0) {
+        _currentTarget.event = EVENT_PI_READY;
+        _currentTarget.last_update_ms = now;
+        _newMsgParsed = true;
+        return;
+    }
+    if (strcmp(typeStr, "START_PATROL") == 0 || strcmp(typeStr, "START") == 0) {
+        _currentTarget.event = EVENT_START_PATROL;
+        _currentTarget.last_update_ms = now;
+        _newMsgParsed = true;
+        return;
+    }
+    if (strcmp(typeStr, "PAUSE") == 0 || strcmp(typeStr, "IDLE") == 0 || strcmp(typeStr, "STANDBY") == 0) {
+        _currentTarget.event = EVENT_PAUSE_STANDBY;
+        _currentTarget.last_update_ms = now;
+        _newMsgParsed = true;
+        return;
+    }
+
     const char* eventStr = doc["event"];
     if (!eventStr) {
         return;
     }
-
-    uint32_t now = millis();
 
     if (strcmp(eventStr, "FIRE_CONFIRMED") == 0) {
         _currentTarget.event = EVENT_FIRE_CONFIRMED;

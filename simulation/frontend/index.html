@@ -62,6 +62,12 @@
         </div>
       </div>
 
+      <!-- FSM Mission Controls (Autonomous Patrol vs Standby IDLE) -->
+      <div class="mission-controls-hud">
+        <button id="btn-mission-start" class="hud-btn-mission start" title="Start Autonomous Room Sweep Patrol (STATE_SEARCHING)">▶ START PATROL</button>
+        <button id="btn-mission-pause" class="hud-btn-mission pause" title="Halt in Safe Standby (STATE_IDLE)">⏸ STANDBY</button>
+      </div>
+
       <button id="btn-global-estop" class="btn-tool danger" style="padding: 6px 12px; font-weight: bold; letter-spacing: 1px;">🛑 E-STOP</button>
     </div>
   </header>
@@ -146,6 +152,10 @@
               </div>
             </div>
             <div class="terminal-actions">
+              <button id="btn-toggle-cam-stream" class="dash-badge stream-toggle-btn active" title="Toggle Wi-Fi video stream on/off to save network bandwidth">
+                <span class="stream-btn-dot"></span>
+                <span id="stream-btn-text">📹 Stream: ON</span>
+              </button>
               <span id="vision-cam-source-badge" class="dash-badge live-badge">🔴 LIVE WEBCAM</span>
               <span id="vision-state-badge" class="dash-badge scan-badge">PATROL SCAN</span>
             </div>
@@ -158,6 +168,11 @@
               <div class="dash-cam-offline-icon">📷</div>
               <div class="dash-cam-offline-title">CONNECTING TO USB WEBCAM...</div>
               <div class="dash-cam-offline-sub">Awaiting video stream from Raspberry Pi 3B (/dev/video0)</div>
+            </div>
+            <div id="dash-cam-paused-banner" class="dash-cam-offline-overlay dash-cam-paused-overlay" style="display: none;">
+              <div class="dash-cam-offline-icon">⏸️</div>
+              <div class="dash-cam-offline-title">VIDEO STREAM PAUSED</div>
+              <div class="dash-cam-offline-sub">Wi-Fi data stream paused (Bandwidth Saving Mode). Click 'Stream: OFF' to resume.</div>
             </div>
             <div class="vision-hud-overlay">
               <div id="dash-vision-crosshair" class="vision-crosshair"></div>
@@ -297,6 +312,9 @@
             <span class="dash-badge">UART DIRECT</span>
           </div>
           <div class="bench-grid">
+            <button class="bench-btn success" data-cmd="start" title="Start Autonomous Room Patrol">▶ Start Patrol</button>
+            <button class="bench-btn warning" data-cmd="pause" title="Halt to Standby IDLE">⏸ Standby IDLE</button>
+            <button class="bench-btn info" data-cmd="handshake" title="Simulate Pi Ready Handshake">🤝 Pi Handshake</button>
             <button class="bench-btn" data-cmd="w" title="Drive Forward for 1s">⬆ Forward (1s)</button>
             <button class="bench-btn" data-cmd="s" title="Drive Reverse for 1s">⬇ Reverse (1s)</button>
             <button class="bench-btn" data-cmd="a" title="Pivot Turn Left">⬅ Pivot Left</button>
@@ -305,6 +323,9 @@
             <button class="bench-btn danger" data-cmd="x" title="Emergency Stop All Motors">🛑 Motor E-Stop</button>
             <button class="bench-btn" data-cmd="t" title="Toggle Sensor Telemetry Loop">📡 Toggle Stream</button>
             <button class="bench-btn" data-cmd="sweep" title="Test Turret Servo Sweep (45°-135°)">🔄 Turret Sweep</button>
+            <button class="bench-btn" data-cmd="u" title="Tilt Turret Up (+10°)">🔼 Tilt Up</button>
+            <button class="bench-btn" data-cmd="j" title="Tilt Turret Down (-10°)">🔽 Tilt Down</button>
+            <button class="bench-btn" data-cmd="h" title="Tilt Turret Level (90° Home)">⏹ Tilt Level</button>
             <button class="bench-btn" data-cmd="sim" title="Inject Virtual Flame Target">🔥 Inject Flame</button>
             <button class="bench-btn" data-cmd="clear" title="Clear Active Flame Target">💨 Clear Flame</button>
           </div>
@@ -684,15 +705,15 @@
   </div>
 
   <!-- Application Scripts -->
-  <script src="js/fire_system.js?v=9"></script>
-  <script src="js/obstacle_manager.js?v=9"></script>
-  <script src="js/robot_model.js?v=9"></script>
-  <script src="js/sensor_simulator.js?v=9"></script>
-  <script src="js/asset_loader.js?v=9"></script>
-  <script src="js/ultrasonic_mapper.js?v=9"></script>
-  <script src="js/nav_model_runner.js?v=9"></script>
-  <script src="js/sim_world.js?v=9"></script>
-  <script src="js/ui_controller.js?v=12"></script>
+  <script src="js/fire_system.js?v=14"></script>
+  <script src="js/obstacle_manager.js?v=14"></script>
+  <script src="js/robot_model.js?v=14"></script>
+  <script src="js/sensor_simulator.js?v=14"></script>
+  <script src="js/asset_loader.js?v=14"></script>
+  <script src="js/ultrasonic_mapper.js?v=14"></script>
+  <script src="js/nav_model_runner.js?v=14"></script>
+  <script src="js/sim_world.js?v=18"></script>
+  <script src="js/ui_controller.js?v=18"></script>
   <script>
     window.addEventListener('DOMContentLoaded', () => {
       const container = document.getElementById('canvas-container');
@@ -703,17 +724,24 @@
       window.simWorld = simWorld;
       window.uiController = uiController;
 
-      // Render Loop: Simulation physics & 3D rendering are STOPPED when on the Dashboard page!
+      // Render Loop: Keep 3D simulation world, physics, and kinematics continuously active
       function animate() {
         requestAnimationFrame(animate);
-        if (uiController.activePage === 'simulation') {
-          // Simulation Sub-Page Active: run 3D Three.js physics and virtual robot navigation
-          simWorld.update();
-          uiController.update(simWorld.clock.getDelta());
-        } else {
-          // Operations Dashboard Active: STOP simulation physics and virtual robot navigation!
-          // Strictly process physical hardware telemetry & update dashboard gauges
-          uiController.updateDashboardOnly(0.016);
+        try {
+          const dt = Math.min(simWorld.clock.getDelta(), 0.05);
+
+          // Keep 3D twin kinematics, sensors, and rendering updated with frame dt
+          simWorld.update(dt);
+
+          if (uiController.activePage === 'simulation') {
+            // Simulation Sub-Page Active: run simulation HUD & navigation updates
+            uiController.update(dt);
+          } else {
+            // Operations Dashboard Active: run dashboard HUD, mini-map, and video stream updates
+            uiController.updateDashboardOnly(dt);
+          }
+        } catch (err) {
+          console.error('[Render Loop Error]', err);
         }
       }
       animate();

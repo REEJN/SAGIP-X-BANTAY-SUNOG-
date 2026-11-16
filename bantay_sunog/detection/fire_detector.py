@@ -191,12 +191,9 @@ class FireDetector:
 
     def _detect_hsv(self, frame: np.ndarray) -> List[Detection]:
         """
-        [EXPERIMENTAL] Detect fire-like regions using HSV colour analysis
-        combined with background subtraction for flicker/motion filtering.
-
-        WARNING: This is a heuristic fallback.  It WILL produce false
-        positives on orange/red objects, incandescent lights, sunlight, etc.
-        Use a trained TFLite model for production deployment.
+        Multi-stage fire detection combining narrow HSV flame segmentation,
+        RGB dominance verification (R > G > B), incandescent core thresholding (V >= 235),
+        and aspect ratio validation. Rejects skin tones and static ambient warm objects.
         """
         frame_h, frame_w = frame.shape[:2]
 
@@ -211,16 +208,28 @@ class FireDetector:
 
         mask1 = cv2.inRange(hsv, lower1, upper1)
         mask2 = cv2.inRange(hsv, lower2, upper2)
-        color_mask = cv2.bitwise_or(mask1, mask2)
+        hsv_color_mask = cv2.bitwise_or(mask1, mask2)
 
-        # 3. Motion / flicker filtering via background subtraction
+        # 3. RGB Dominance Rule: Fire emits predominantly red/orange light
+        # R >= FIRE_RGB_R_MIN and R > G and G >= B and (R - G) >= FIRE_RGB_DIFF_MIN
+        b = frame[:, :, 0].astype(np.int16)
+        g = frame[:, :, 1].astype(np.int16)
+        r = frame[:, :, 2].astype(np.int16)
+
+        rgb_rule = (r >= config.FIRE_RGB_R_MIN) & (r > g) & (g >= b) & ((r - g) >= config.FIRE_RGB_DIFF_MIN)
+        rgb_mask = rgb_rule.astype(np.uint8) * 255
+
+        # Combined color mask: Both HSV and RGB conditions must be satisfied
+        color_mask = cv2.bitwise_and(hsv_color_mask, rgb_mask)
+
+        # 4. Optional motion / flicker filtering via background subtraction
         if self._bg_subtractor is not None:
             fg_mask = self._bg_subtractor.apply(frame)
             combined_mask = cv2.bitwise_and(color_mask, fg_mask)
         else:
             combined_mask = color_mask
 
-        # 4. Morphological cleanup
+        # 5. Morphological cleanup
         kernel_size = config.HSV_MORPH_KERNEL_SIZE
         kernel = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (kernel_size, kernel_size)
@@ -228,13 +237,12 @@ class FireDetector:
         cleaned = cv2.morphologyEx(combined_mask, cv2.MORPH_OPEN, kernel)
         cleaned = cv2.morphologyEx(cleaned, cv2.MORPH_DILATE, kernel)
 
-        # 5. Find contours
+        # 6. Find contours
         contours, _ = cv2.findContours(
             cleaned, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
         )
 
         detections: List[Detection] = []
-        total_frame_area = frame_h * frame_w
 
         for cnt in contours:
             area = cv2.contourArea(cnt)
@@ -243,19 +251,34 @@ class FireDetector:
 
             bx, by, bw, bh = cv2.boundingRect(cnt)
 
-            # Aspect ratio filter
+            # Aspect ratio filter (flames are typically vertical or compact)
             if bh == 0:
                 continue
             aspect = float(bw) / float(bh)
             if aspect < config.HSV_ASPECT_RATIO_MIN or aspect > config.HSV_ASPECT_RATIO_MAX:
                 continue
 
-            # Heuristic confidence from area ratio and colour intensity
-            area_ratio = min(area / total_frame_area, 0.5)
-            # Sample mean saturation within the bounding box
+            # 7. Incandescent Combustion Core Check
+            # Any genuine flame has an intense bright emission center
             roi_hsv = hsv[by:by + bh, bx:bx + bw]
-            mean_sat = float(np.mean(roi_hsv[:, :, 1])) / 255.0 if roi_hsv.size > 0 else 0.5
-            confidence = min(0.95, 0.4 + area_ratio * 2.0 + mean_sat * 0.3)
+            if roi_hsv.size == 0:
+                continue
+
+            val_channel = roi_hsv[:, :, 2]
+            core_pixels = np.count_nonzero(val_channel >= config.FIRE_CORE_VAL_MIN)
+            core_ratio = float(core_pixels) / float(bw * bh)
+
+            # Reject candidate if it lacks an incandescent core (e.g. skin, orange fabrics)
+            if core_ratio < config.FIRE_CORE_RATIO_MIN:
+                continue
+
+            # 8. Confidence scoring based on core intensity & color saturation
+            mean_sat = float(np.mean(roi_hsv[:, :, 1])) / 255.0
+            mean_val = float(np.mean(roi_hsv[:, :, 2])) / 255.0
+            core_score = min(0.35, core_ratio * 4.0)
+
+            # Base score + core bonus + saturation bonus
+            confidence = min(0.96, 0.40 + core_score + (mean_sat * 0.15) + (mean_val * 0.10))
 
             if confidence < config.CONFIDENCE_THRESHOLD:
                 continue

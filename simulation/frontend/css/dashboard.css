@@ -156,21 +156,86 @@ html, body {
   color: var(--accent-yellow);
   border-color: var(--accent-yellow);
 }
-.state-badge.task_complete, .state-badge.all_clear {
-  background: rgba(0, 230, 118, 0.25);
-  color: var(--accent-green);
-  border-color: var(--accent-green);
-  animation: pulse-green 1.2s infinite alternate;
+.state-badge.waiting_for_pi {
+  background: rgba(255, 193, 7, 0.25);
+  color: #ffc107;
+  border-color: #ffc107;
+  animation: pulse-amber 1s infinite alternate;
+}
+.state-badge.idle {
+  background: rgba(0, 210, 255, 0.18);
+  color: #00d2ff;
+  border-color: #00d2ff;
 }
 
-@keyframes pulse-red {
-  from { box-shadow: 0 0 5px rgba(255, 51, 75, 0.4); }
-  to { box-shadow: 0 0 15px rgba(255, 51, 75, 0.9); }
+@keyframes pulse-amber {
+  from { box-shadow: 0 0 4px rgba(255, 193, 7, 0.4); opacity: 0.85; }
+  to { box-shadow: 0 0 14px rgba(255, 193, 7, 0.95); opacity: 1.0; }
 }
 
-@keyframes pulse-green {
-  from { box-shadow: 0 0 5px rgba(0, 230, 118, 0.4); }
-  to { box-shadow: 0 0 16px rgba(0, 230, 118, 0.95); }
+.mission-controls-hud {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.hud-btn-mission {
+  padding: 6px 14px;
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  outline: none;
+  border: 1px solid transparent;
+}
+
+.hud-btn-mission.start {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: #22c55e;
+  color: #22c55e;
+}
+
+.hud-btn-mission.start:hover {
+  background: #22c55e;
+  color: #0d1117;
+  box-shadow: 0 0 14px rgba(34, 197, 94, 0.65);
+  transform: translateY(-1px);
+}
+
+.hud-btn-mission.pause {
+  background: rgba(234, 179, 8, 0.2);
+  border-color: #eab308;
+  color: #eab308;
+}
+
+.hud-btn-mission.pause:hover {
+  background: #eab308;
+  color: #0d1117;
+  box-shadow: 0 0 14px rgba(234, 179, 8, 0.65);
+  transform: translateY(-1px);
+}
+
+.bench-btn.success {
+  background: rgba(34, 197, 94, 0.2);
+  border-color: #22c55e;
+  color: #22c55e;
+}
+.bench-btn.success:hover {
+  background: #22c55e;
+  color: #000;
+}
+
+.bench-btn.info {
+  background: rgba(0, 210, 255, 0.2);
+  border-color: #00d2ff;
+  color: #00d2ff;
+}
+.bench-btn.info:hover {
+  background: #00d2ff;
+  color: #000;
 }
 
 .sync-status {
@@ -1071,6 +1136,7 @@ html, body {
   display: block;
   z-index: 1;
   background: #020408;
+  filter: contrast(1.15) saturate(1.40) brightness(1.04);
 }
 
 .dash-cam-offline-overlay {
@@ -1108,6 +1174,73 @@ html, body {
   font-size: 11px;
   color: var(--text-dim);
   margin-top: 4px;
+}
+
+/* Stream ON / OFF Bandwidth Toggle Button */
+.stream-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 3px 8px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  border: 1px solid rgba(0, 230, 118, 0.4);
+  background: rgba(0, 230, 118, 0.12);
+  color: var(--accent-green);
+  transition: all 0.2s ease;
+  user-select: none;
+}
+
+.stream-toggle-btn:hover {
+  background: rgba(0, 230, 118, 0.22);
+  border-color: var(--accent-green);
+  transform: translateY(-1px);
+}
+
+.stream-toggle-btn.paused {
+  border-color: rgba(255, 179, 0, 0.5);
+  background: rgba(255, 179, 0, 0.12);
+  color: var(--accent-yellow);
+}
+
+.stream-toggle-btn.paused:hover {
+  background: rgba(255, 179, 0, 0.22);
+  border-color: var(--accent-yellow);
+}
+
+.stream-btn-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-green);
+  box-shadow: 0 0 6px var(--accent-green);
+  display: inline-block;
+  animation: streamPulse 1.5s infinite;
+}
+
+.stream-toggle-btn.paused .stream-btn-dot {
+  background: var(--accent-yellow);
+  box-shadow: none;
+  animation: none;
+}
+
+@keyframes streamPulse {
+  0% { transform: scale(0.9); opacity: 0.8; }
+  50% { transform: scale(1.2); opacity: 1; }
+  100% { transform: scale(0.9); opacity: 0.8; }
+}
+
+.dash-cam-paused-overlay {
+  background: rgba(4, 8, 16, 0.92);
+  backdrop-filter: blur(4px);
+}
+
+.dash-cam-paused-overlay .dash-cam-offline-title {
+  color: var(--accent-cyan);
 }
 
 .vision-hud-overlay {

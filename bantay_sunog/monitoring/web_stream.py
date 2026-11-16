@@ -344,7 +344,7 @@ _DASHBOARD_HTML = """
                         <span class="metric-value" id="esp32-tilt">--°</span>
                     </div>
                     <div class="metric-row">
-                        <span class="metric-label">Suppression Solenoid:</span>
+                        <span class="metric-label">Extinguisher Trigger:</span>
                         <span class="metric-value" id="esp32-solenoid">STANDBY</span>
                     </div>
                 </div>
@@ -405,11 +405,11 @@ _DASHBOARD_HTML = """
                         document.getElementById('esp32-tilt').textContent = (esp.tilt_angle !== undefined ? esp.tilt_angle + '°' : '--');
                         
                         const solEl = document.getElementById('esp32-solenoid');
-                        if (esp.solenoid_active) {
-                            solEl.textContent = 'SPRAYING (VALVE OPEN)';
+                        if (esp.solenoid_active || esp.extinguisher_active) {
+                            solEl.textContent = 'DISCHARGING (CAN TRIGGERED)';
                             solEl.style.color = 'var(--accent-fire)';
                         } else {
-                            solEl.textContent = 'STANDBY';
+                            solEl.textContent = 'STANDBY (RELEASED)';
                             solEl.style.color = 'var(--accent-muted)';
                         }
                     }
