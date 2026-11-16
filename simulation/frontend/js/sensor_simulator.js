@@ -79,6 +79,24 @@ class SensorSimulator {
     this.lastPhysicalSensorTime = 0;
 
     // -------------------------------------------------------------------------
+    // 4. Virtual MPU-6050 6-Axis IMU (Attitude, Gyro, Accel)
+    // -------------------------------------------------------------------------
+    this.imu = {
+      connected: true,
+      accelX: 0.0,
+      accelY: 0.0,
+      accelZ: 1.0,
+      gyroX: 0.0,
+      gyroY: 0.0,
+      gyroZ: 0.0,
+      pitch: 0.0,
+      roll: 0.0,
+      yaw: 0.0,
+      tempC: 28.5
+    };
+    this._prevYawRad = 0;
+
+    // -------------------------------------------------------------------------
     // 4. Extinguisher Spray Particles
     // -------------------------------------------------------------------------
     this.initSprayParticles();
@@ -258,7 +276,34 @@ class SensorSimulator {
     }
 
     // -------------------------------------------------------------------------
-    // 3. Extinguisher Spray Simulation
+    // 3. Virtual MPU-6050 Motion Dynamics & Attitude Update
+    // -------------------------------------------------------------------------
+    if (!this.usePhysicalSensors && this.robot) {
+      // Robot heading in degrees (0 - 360)
+      const curYawRad = this.robot.yaw || 0;
+      let yawDeg = (-curYawRad * (180.0 / Math.PI)) % 360.0;
+      if (yawDeg < 0) yawDeg += 360.0;
+      this.imu.yaw = yawDeg;
+
+      // Angular velocity around Z (yaw rate in deg/s)
+      if (dt > 0.0001) {
+        let dYaw = curYawRad - this._prevYawRad;
+        while (dYaw > Math.PI) dYaw -= Math.PI * 2;
+        while (dYaw < -Math.PI) dYaw += Math.PI * 2;
+        this.imu.gyroZ = (-dYaw * (180.0 / Math.PI)) / dt;
+      }
+      this._prevYawRad = curYawRad;
+
+      // Pitch, Roll, and Acceleration with subtle simulated chassis motion
+      this.imu.pitch = (Math.random() - 0.5) * 0.4;
+      this.imu.roll = (Math.random() - 0.5) * 0.4;
+      this.imu.accelX = (Math.random() - 0.5) * 0.04;
+      this.imu.accelY = (Math.random() - 0.5) * 0.04;
+      this.imu.accelZ = 1.0 + (Math.random() - 0.5) * 0.02;
+    }
+
+    // -------------------------------------------------------------------------
+    // 4. Extinguisher Spray Simulation
     // -------------------------------------------------------------------------
     this.updateSpray(dt);
 
@@ -387,6 +432,21 @@ class SensorSimulator {
       this.flameDetected = !!telem.flame_detected;
     }
 
+    // Physical MPU-6050 telemetry ingestion
+    if (telem.mpu_connected !== undefined) {
+      this.imu.connected = !!telem.mpu_connected;
+    }
+    if (telem.pitch !== undefined) this.imu.pitch = Number(telem.pitch);
+    if (telem.roll !== undefined) this.imu.roll = Number(telem.roll);
+    if (telem.yaw !== undefined) this.imu.yaw = Number(telem.yaw);
+    if (telem.gyro_x !== undefined) this.imu.gyroX = Number(telem.gyro_x);
+    if (telem.gyro_y !== undefined) this.imu.gyroY = Number(telem.gyro_y);
+    if (telem.gyro_z !== undefined) this.imu.gyroZ = Number(telem.gyro_z);
+    if (telem.accel_x !== undefined) this.imu.accelX = Number(telem.accel_x);
+    if (telem.accel_y !== undefined) this.imu.accelY = Number(telem.accel_y);
+    if (telem.accel_z !== undefined) this.imu.accelZ = Number(telem.accel_z);
+    if (telem.temp_c !== undefined) this.imu.tempC = Number(telem.temp_c);
+
     this.reprojectPhysicalRays();
   }
 
@@ -400,7 +460,18 @@ class SensorSimulator {
       solenoid_active: this.robot.solenoidActive,
       left_pwm: this.robot.leftPwm,
       right_pwm: this.robot.rightPwm,
-      target: this.detectedFlameTarget
+      target: this.detectedFlameTarget,
+      mpu_connected: this.imu.connected,
+      accel_x: Number(this.imu.accelX.toFixed(2)),
+      accel_y: Number(this.imu.accelY.toFixed(2)),
+      accel_z: Number(this.imu.accelZ.toFixed(2)),
+      gyro_x: Number(this.imu.gyroX.toFixed(1)),
+      gyro_y: Number(this.imu.gyroY.toFixed(1)),
+      gyro_z: Number(this.imu.gyroZ.toFixed(1)),
+      pitch: Number(this.imu.pitch.toFixed(1)),
+      roll: Number(this.imu.roll.toFixed(1)),
+      yaw: Number(this.imu.yaw.toFixed(1)),
+      temp_c: Number(this.imu.tempC.toFixed(1))
     };
   }
 }

@@ -403,6 +403,17 @@ class SerialConnector:
                 "left_pwm": 140,
                 "right_pwm": 140,
                 "uptime": uptime,
+                "mpu_connected": True,
+                "accel_x": 0.01,
+                "accel_y": -0.02,
+                "accel_z": 1.00,
+                "gyro_x": 0.0,
+                "gyro_y": 0.0,
+                "gyro_z": 0.4,
+                "pitch": -0.8,
+                "roll": 1.2,
+                "yaw": round((uptime / 80.0) % 360, 1),
+                "temp_c": 28.5,
                 "_is_mock": True,
                 "is_physical": False
             }

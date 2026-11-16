@@ -35,8 +35,23 @@ public:
     // Physical Flame Sensor
     bool isFlameDetected() const;
 
+    // MPU-6050 6-Axis Motion & Attitude Getters
+    bool isMpuConnected() const { return _mpuConnected; }
+    float getAccelX() const { return _accelX; }
+    float getAccelY() const { return _accelY; }
+    float getAccelZ() const { return _accelZ; }
+    float getGyroX() const { return _gyroX; }
+    float getGyroY() const { return _gyroY; }
+    float getGyroZ() const { return _gyroZ; }
+    float getPitch() const { return _pitchDeg; }
+    float getRoll() const { return _rollDeg; }
+    float getYaw() const { return _yawDeg; }
+    float getTemperature() const { return _tempC; }
+
 private:
     float _measureDistanceCm(uint8_t trigPin, uint8_t echoPin);
+    bool _initMpu6050();
+    void _pollMpu6050(float dt);
 
     float _distFront;
     float _distLeft;
@@ -44,4 +59,19 @@ private:
 
     uint8_t _activeSensorIndex;
     uint32_t _lastSensorPollMs;
+
+    // MPU-6050 State
+    bool _mpuConnected;
+    uint8_t _mpuAddr;
+    float _accelX;
+    float _accelY;
+    float _accelZ;
+    float _gyroX;
+    float _gyroY;
+    float _gyroZ;
+    float _pitchDeg;
+    float _rollDeg;
+    float _yawDeg;
+    float _tempC;
+    uint32_t _lastMpuPollMs;
 };

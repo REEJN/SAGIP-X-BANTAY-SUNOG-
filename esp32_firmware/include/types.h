@@ -100,4 +100,17 @@ struct RobotTelemetry {
     int left_motor_pwm;
     int right_motor_pwm;
     uint32_t uptime_ms;
+
+    // MPU-6050 6-Axis Motion & Attitude Telemetry
+    bool mpu_connected;
+    float accel_x;       // Linear acceleration in X (g)
+    float accel_y;       // Linear acceleration in Y (g)
+    float accel_z;       // Linear acceleration in Z (g)
+    float gyro_x;        // Angular velocity in X (deg/s)
+    float gyro_y;        // Angular velocity in Y (deg/s)
+    float gyro_z;        // Angular velocity in Z / yaw rate (deg/s)
+    float pitch_deg;     // Computed pitch tilt angle (degrees)
+    float roll_deg;      // Computed roll tilt angle (degrees)
+    float yaw_deg;       // Integrated yaw heading (degrees)
+    float temp_c;        // Sensor die temperature (deg C)
 };

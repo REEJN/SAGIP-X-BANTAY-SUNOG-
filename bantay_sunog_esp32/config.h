@@ -96,6 +96,16 @@
 #define REQUIRE_HARDWARE_FLAME_VERIFICATION true
 
 // -----------------------------------------------------------------------------
+// 6. MPU-6050 6-Axis Inertial Measurement Unit (IMU via I2C)
+// -----------------------------------------------------------------------------
+#define PIN_I2C_SDA                 14       // I2C Data Pin (MPU-6050 SDA)
+#define PIN_I2C_SCL                 15       // I2C Clock Pin (MPU-6050 SCL)
+#define MPU6050_I2C_ADDR            0x68     // Default I2C address (AD0 = GND)
+#define MPU6050_I2C_FREQ_HZ         400000   // 400 kHz Fast I2C Bus Speed
+#define ENABLE_MPU6050              true     // Enable MPU-6050 polling if hardware present
+#define MPU6050_POLL_INTERVAL_MS    20       // 50 Hz IMU sampling rate
+
+// -----------------------------------------------------------------------------
 // 6. Navigation, Visual Servoing & Approach Parameters
 // -----------------------------------------------------------------------------
 #define EXTINGUISH_DISTANCE_CM      30.0f    // Target distance to stop and spray (cm)

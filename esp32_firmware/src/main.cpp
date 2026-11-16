@@ -557,6 +557,19 @@ void loop() {
     telemetry.right_motor_pwm = motorCtrl.getRightPwm();
     telemetry.uptime_ms = now;
 
+    // MPU-6050 6-Axis Motion & Attitude
+    telemetry.mpu_connected = sensorMgr.isMpuConnected();
+    telemetry.accel_x = sensorMgr.getAccelX();
+    telemetry.accel_y = sensorMgr.getAccelY();
+    telemetry.accel_z = sensorMgr.getAccelZ();
+    telemetry.gyro_x = sensorMgr.getGyroX();
+    telemetry.gyro_y = sensorMgr.getGyroY();
+    telemetry.gyro_z = sensorMgr.getGyroZ();
+    telemetry.pitch_deg = sensorMgr.getPitch();
+    telemetry.roll_deg = sensorMgr.getRoll();
+    telemetry.yaw_deg = sensorMgr.getYaw();
+    telemetry.temp_c = sensorMgr.getTemperature();
+
     reporter.sendTelemetry(telemetry);
 
     delay(5); // Cooperative yield

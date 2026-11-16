@@ -303,6 +303,52 @@
               </div>
             </div>
           </div>
+
+          <!-- MPU-6050 6-Axis Motion & Attitude Matrix -->
+          <div class="imu-section">
+            <div class="section-label" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 6px;">
+              <span>🧭 MPU-6050 6-AXIS IMU (I2C 0x68):</span>
+              <span id="dash-imu-status" class="dash-badge" style="font-size: 9px; padding: 1px 6px; background: rgba(0, 240, 255, 0.15); color: var(--accent-cyan);">OFFLINE</span>
+            </div>
+
+            <div class="imu-attitude-grid">
+              <div class="imu-cell">
+                <span class="imu-cell-label">PITCH</span>
+                <span id="dash-imu-pitch" class="imu-cell-val">--°</span>
+              </div>
+              <div class="imu-cell">
+                <span class="imu-cell-label">ROLL</span>
+                <span id="dash-imu-roll" class="imu-cell-val">--°</span>
+              </div>
+              <div class="imu-cell">
+                <span class="imu-cell-label">YAW</span>
+                <span id="dash-imu-yaw" class="imu-cell-val">--°</span>
+              </div>
+            </div>
+
+            <div class="imu-subgrid">
+              <div class="imu-subcard">
+                <div class="imu-subcard-title">Linear Accel (g)</div>
+                <div class="imu-axes-row">
+                  <span>X:<b id="dash-imu-ax">--</b></span>
+                  <span>Y:<b id="dash-imu-ay">--</b></span>
+                  <span>Z:<b id="dash-imu-az">--</b></span>
+                </div>
+              </div>
+              <div class="imu-subcard">
+                <div class="imu-subcard-title">Angular Gyro (°/s)</div>
+                <div class="imu-axes-row">
+                  <span>X:<b id="dash-imu-gx">--</b></span>
+                  <span>Y:<b id="dash-imu-gy">--</b></span>
+                  <span>Z:<b id="dash-imu-gz">--</b></span>
+                </div>
+              </div>
+            </div>
+            <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-top: 5px; padding: 0 4px;">
+              <span>Die Temp: <b id="dash-imu-temp" style="color: #fff;">-- °C</b></span>
+              <span>Bus: <b style="color: var(--accent-cyan);">400 kHz Fast I2C</b></span>
+            </div>
+          </div>
         </div>
 
         <!-- Hardware Bench Testing Controls -->
@@ -427,6 +473,7 @@
           <span class="chart-pill active" data-channel="sensors">Ultrasonic Distances</span>
           <span class="chart-pill" data-channel="pwm">Motor PWMs</span>
           <span class="chart-pill" data-channel="flame">Flame Confidence</span>
+          <span class="chart-pill" data-channel="imu">IMU Attitude (MPU-6050)</span>
         </div>
       </div>
       <canvas id="dashboard-chart-canvas" height="140"></canvas>
@@ -628,6 +675,33 @@
               <span id="solenoid-indicator-dot" class="indicator-dot"></span>
               <span id="solenoid-indicator-txt">OFF</span>
             </div>
+          </div>
+        </div>
+
+        <!-- MPU-6050 6-Axis IMU (Simulation View) -->
+        <div class="imu-sim-box" style="margin-top: 10px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.08);">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+            <span style="font-size: 11px; font-weight: 700; color: var(--accent-cyan); letter-spacing: 0.5px;">🧭 MPU-6050 ATTITUDE</span>
+            <span id="sim-imu-status" style="font-size: 9px; color: var(--accent-green); font-weight: 600;">ACTIVE</span>
+          </div>
+          <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; text-align: center;">
+            <div style="background: rgba(0,0,0,0.3); padding: 4px 2px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);">
+              <div style="font-size: 9px; color: var(--text-dim);">PITCH</div>
+              <div id="sim-imu-pitch" style="font-size: 12px; font-weight: bold; color: #fff;">0.0°</div>
+            </div>
+            <div style="background: rgba(0,0,0,0.3); padding: 4px 2px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);">
+              <div style="font-size: 9px; color: var(--text-dim);">ROLL</div>
+              <div id="sim-imu-roll" style="font-size: 12px; font-weight: bold; color: #fff;">0.0°</div>
+            </div>
+            <div style="background: rgba(0,0,0,0.3); padding: 4px 2px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.05);">
+              <div style="font-size: 9px; color: var(--text-dim);">YAW</div>
+              <div id="sim-imu-yaw" style="font-size: 12px; font-weight: bold; color: var(--accent-cyan);">0.0°</div>
+            </div>
+          </div>
+          <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-dim); margin-top: 5px; padding: 0 2px;">
+            <span>Gz: <b id="sim-imu-gz" style="color: #fff;">0.0°/s</b></span>
+            <span>Az: <b id="sim-imu-az" style="color: #fff;">1.00g</b></span>
+            <span>Temp: <b id="sim-imu-temp" style="color: #fff;">28.5°C</b></span>
           </div>
         </div>
       </div>

@@ -2344,6 +2344,39 @@ class UIController {
     const tiltTxt = document.getElementById('hud-tilt-txt');
     if (tiltTxt) tiltTxt.textContent = `${telem.tilt_angle}°`;
 
+    // MPU-6050 Attitude in Simulation Tab
+    if (document.getElementById('sim-imu-pitch')) {
+      document.getElementById('sim-imu-pitch').textContent = (telem.pitch !== undefined) ? `${Number(telem.pitch).toFixed(1)}°` : '0.0°';
+    }
+    if (document.getElementById('sim-imu-roll')) {
+      document.getElementById('sim-imu-roll').textContent = (telem.roll !== undefined) ? `${Number(telem.roll).toFixed(1)}°` : '0.0°';
+    }
+    if (document.getElementById('sim-imu-yaw')) {
+      document.getElementById('sim-imu-yaw').textContent = (telem.yaw !== undefined) ? `${Number(telem.yaw).toFixed(1)}°` : '0.0°';
+    }
+    if (document.getElementById('sim-imu-gz')) {
+      document.getElementById('sim-imu-gz').textContent = (telem.gyro_z !== undefined) ? `${Number(telem.gyro_z).toFixed(1)}°/s` : '0.0°/s';
+    }
+    if (document.getElementById('sim-imu-az')) {
+      document.getElementById('sim-imu-az').textContent = (telem.accel_z !== undefined) ? `${Number(telem.accel_z).toFixed(2)}g` : '1.00g';
+    }
+    if (document.getElementById('sim-imu-temp')) {
+      document.getElementById('sim-imu-temp').textContent = (telem.temp_c !== undefined) ? `${Number(telem.temp_c).toFixed(1)}°C` : '28.5°C';
+    }
+    const simImuStatus = document.getElementById('sim-imu-status');
+    if (simImuStatus) {
+      if (telem.mpu_connected === true) {
+        simImuStatus.textContent = 'ACTIVE';
+        simImuStatus.style.color = 'var(--accent-green)';
+      } else if (telem.mpu_connected === false) {
+        simImuStatus.textContent = 'FAULT (NACK)';
+        simImuStatus.style.color = 'var(--accent-red)';
+      } else {
+        simImuStatus.textContent = 'NO TELEM';
+        simImuStatus.style.color = '#ffb300';
+      }
+    }
+
     // Camera PIP Bounding Box
     const bboxEl = document.getElementById('pip-bbox');
     const target = this.realVisionTarget || telem.target;
@@ -2724,6 +2757,24 @@ class UIController {
         dSolTxt.style.color = '#fff';
       }
 
+      // Zero out MPU-6050 IMU readings
+      const dImuStatus = document.getElementById('dash-imu-status');
+      if (dImuStatus) {
+        dImuStatus.textContent = 'OFFLINE';
+        dImuStatus.style.color = 'var(--text-muted)';
+        dImuStatus.style.background = 'rgba(255, 255, 255, 0.05)';
+      }
+      if (document.getElementById('dash-imu-pitch')) document.getElementById('dash-imu-pitch').textContent = '--°';
+      if (document.getElementById('dash-imu-roll')) document.getElementById('dash-imu-roll').textContent = '--°';
+      if (document.getElementById('dash-imu-yaw')) document.getElementById('dash-imu-yaw').textContent = '--°';
+      if (document.getElementById('dash-imu-ax')) document.getElementById('dash-imu-ax').textContent = '--';
+      if (document.getElementById('dash-imu-ay')) document.getElementById('dash-imu-ay').textContent = '--';
+      if (document.getElementById('dash-imu-az')) document.getElementById('dash-imu-az').textContent = '--';
+      if (document.getElementById('dash-imu-gx')) document.getElementById('dash-imu-gx').textContent = '--';
+      if (document.getElementById('dash-imu-gy')) document.getElementById('dash-imu-gy').textContent = '--';
+      if (document.getElementById('dash-imu-gz')) document.getElementById('dash-imu-gz').textContent = '--';
+      if (document.getElementById('dash-imu-temp')) document.getElementById('dash-imu-temp').textContent = '-- °C';
+
       this.drawTacticalMiniMapOffline();
       this.renderTelemetryChartOffline();
       return;
@@ -2898,6 +2949,58 @@ class UIController {
       }
     }
 
+    // MPU-6050 6-Axis Motion & Attitude Matrix
+    const dImuStatus = document.getElementById('dash-imu-status');
+    if (dImuStatus) {
+      if (telem.mpu_connected === true) {
+        dImuStatus.textContent = 'ONLINE (0x68)';
+        dImuStatus.style.color = 'var(--accent-green)';
+        dImuStatus.style.background = 'rgba(0, 230, 118, 0.15)';
+      } else if (telem.mpu_connected === false) {
+        dImuStatus.textContent = 'SENSOR FAULT (NACK)';
+        dImuStatus.style.color = 'var(--accent-red)';
+        dImuStatus.style.background = 'rgba(255, 51, 75, 0.15)';
+      } else {
+        dImuStatus.textContent = 'NO FIRMWARE DATA (REFLASH)';
+        dImuStatus.style.color = '#ffb300';
+        dImuStatus.style.background = 'rgba(255, 179, 0, 0.15)';
+      }
+    }
+    const curPitch = (telem.pitch !== undefined) ? telem.pitch : telem.pitch_deg;
+    const curRoll = (telem.roll !== undefined) ? telem.roll : telem.roll_deg;
+    const curYaw = (telem.yaw !== undefined) ? telem.yaw : telem.yaw_deg;
+
+    if (document.getElementById('dash-imu-pitch')) {
+      document.getElementById('dash-imu-pitch').textContent = (curPitch !== undefined) ? `${Number(curPitch).toFixed(1)}°` : '--°';
+    }
+    if (document.getElementById('dash-imu-roll')) {
+      document.getElementById('dash-imu-roll').textContent = (curRoll !== undefined) ? `${Number(curRoll).toFixed(1)}°` : '--°';
+    }
+    if (document.getElementById('dash-imu-yaw')) {
+      document.getElementById('dash-imu-yaw').textContent = (curYaw !== undefined) ? `${Number(curYaw).toFixed(1)}°` : '--°';
+    }
+    if (document.getElementById('dash-imu-ax')) {
+      document.getElementById('dash-imu-ax').textContent = (telem.accel_x !== undefined) ? Number(telem.accel_x).toFixed(2) : '--';
+    }
+    if (document.getElementById('dash-imu-ay')) {
+      document.getElementById('dash-imu-ay').textContent = (telem.accel_y !== undefined) ? Number(telem.accel_y).toFixed(2) : '--';
+    }
+    if (document.getElementById('dash-imu-az')) {
+      document.getElementById('dash-imu-az').textContent = (telem.accel_z !== undefined) ? Number(telem.accel_z).toFixed(2) : '--';
+    }
+    if (document.getElementById('dash-imu-gx')) {
+      document.getElementById('dash-imu-gx').textContent = (telem.gyro_x !== undefined) ? Number(telem.gyro_x).toFixed(1) : '--';
+    }
+    if (document.getElementById('dash-imu-gy')) {
+      document.getElementById('dash-imu-gy').textContent = (telem.gyro_y !== undefined) ? Number(telem.gyro_y).toFixed(1) : '--';
+    }
+    if (document.getElementById('dash-imu-gz')) {
+      document.getElementById('dash-imu-gz').textContent = (telem.gyro_z !== undefined) ? Number(telem.gyro_z).toFixed(1) : '--';
+    }
+    if (document.getElementById('dash-imu-temp')) {
+      document.getElementById('dash-imu-temp').textContent = (telem.temp_c !== undefined) ? `${Number(telem.temp_c).toFixed(1)} °C` : '-- °C';
+    }
+
     // 3. Mini-Map Drawing (10 Hz)
     this.minimapTimer = (this.minimapTimer || 0) + (dt || 0.016);
     if (this.minimapTimer >= 0.10) {
@@ -2916,7 +3019,10 @@ class UIController {
         right: telem.dist_right || 0,
         leftPwm: telem.left_pwm || 0,
         rightPwm: telem.right_pwm || 0,
-        flameConf: telem.flame_detected ? 100 : 0
+        flameConf: telem.flame_detected ? 100 : 0,
+        pitch: (telem.pitch !== undefined) ? Number(telem.pitch) : 0,
+        roll: (telem.roll !== undefined) ? Number(telem.roll) : 0,
+        yaw: (telem.yaw !== undefined) ? Number(telem.yaw) : 0
       });
       if (this.telemetryHistory.length > 60) this.telemetryHistory.shift();
       this.renderTelemetryChart();
@@ -3135,6 +3241,25 @@ class UIController {
       ctx.fillText('100%', 10, 25);
       ctx.fillText('50%', 15, (h / 2) + 5);
       ctx.fillText('0%', 20, h - 18);
+    } else if (this.activeChartChannel === 'imu') {
+      drawLine('pitch', '#00d2ff', -90, 90);
+      drawLine('roll', '#ffd600', -90, 90);
+      drawLine('yaw', '#00e676', 0, 360);
+
+      // Y-axis labels
+      ctx.fillStyle = '#8b949e';
+      ctx.font = '10px monospace';
+      ctx.fillText('+90°/360°', 2, 25);
+      ctx.fillText('0°/180°', 8, (h / 2) + 5);
+      ctx.fillText('-90°/0°', 4, h - 18);
+
+      // Chart Legend
+      ctx.fillStyle = '#00d2ff';
+      ctx.fillText('■ Pitch (-90°..+90°)', w - 240, 15);
+      ctx.fillStyle = '#ffd600';
+      ctx.fillText('■ Roll (-90°..+90°)', w - 145, 15);
+      ctx.fillStyle = '#00e676';
+      ctx.fillText('■ Yaw (0°..360°)', w - 65, 15);
     }
   }
 }
