@@ -47,51 +47,121 @@ class RobotModel {
 
   initProceduralModel() {
     // -------------------------------------------------------------------------
-    // 1. Chassis Body
+    // 1. EMBER Hexagonal Rescue Bot Chassis & Body Enclosure
     // -------------------------------------------------------------------------
-    const chassisGeo = new THREE.BoxGeometry(0.22, 0.07, 0.30);
-    const chassisMat = new THREE.MeshStandardMaterial({
-      color: 0x1e293b,
-      metalness: 0.5,
-      roughness: 0.4
+    // Main Hexagonal Outer Body Shell (#d9382b Rescue Red)
+    const hexRadius = 0.16; // ~300mm diameter
+    const hexHeight = 0.11;
+    const hexGeo = new THREE.CylinderGeometry(hexRadius, hexRadius, hexHeight, 6);
+    hexGeo.rotateY(Math.PI / 6); // Front flat face with sensor mouth
+    const hexMat = new THREE.MeshStandardMaterial({
+      color: 0xd9382b, // EMBER Rescue Red
+      metalness: 0.35,
+      roughness: 0.35
     });
-    const chassisMesh = new THREE.Mesh(chassisGeo, chassisMat);
-    chassisMesh.position.y = 0.065;
-    chassisMesh.castShadow = true;
-    chassisMesh.receiveShadow = true;
-    this.proceduralGroup.add(chassisMesh);
+    const hexMesh = new THREE.Mesh(hexGeo, hexMat);
+    hexMesh.position.y = 0.08;
+    hexMesh.castShadow = true;
+    hexMesh.receiveShadow = true;
+    this.proceduralGroup.add(hexMesh);
 
-    // Chassis accent stripe
-    const stripeGeo = new THREE.BoxGeometry(0.222, 0.015, 0.12);
+    // Hazard Stripes (9mm Yellow #ffc21a + 3mm White accent ring around base)
+    const stripeGeo = new THREE.CylinderGeometry(hexRadius + 0.002, hexRadius + 0.002, 0.016, 6);
+    stripeGeo.rotateY(Math.PI / 6);
     const stripeMat = new THREE.MeshStandardMaterial({
-      color: 0x00d2ff,
-      emissive: 0x005577,
-      roughness: 0.2
+      color: 0xffc21a, // Yellow hazard
+      roughness: 0.3,
+      metalness: 0.2
     });
     const stripeMesh = new THREE.Mesh(stripeGeo, stripeMat);
-    stripeMesh.position.set(0, 0.065, 0.02);
+    stripeMesh.position.y = 0.038;
     this.proceduralGroup.add(stripeMesh);
 
-    // Electronics Deck (Raspberry Pi & ESP32 mockup)
-    const deckGeo = new THREE.BoxGeometry(0.18, 0.01, 0.22);
-    const deckMat = new THREE.MeshStandardMaterial({ color: 0x064e3b, roughness: 0.6 });
-    const deckMesh = new THREE.Mesh(deckGeo, deckMat);
-    deckMesh.position.set(0, 0.105, -0.02);
-    this.proceduralGroup.add(deckMesh);
+    // Dark Top Deck Plate
+    const deckPlateGeo = new THREE.CylinderGeometry(hexRadius - 0.005, hexRadius - 0.005, 0.008, 6);
+    deckPlateGeo.rotateY(Math.PI / 6);
+    const deckPlateMat = new THREE.MeshStandardMaterial({
+      color: 0x181e29,
+      roughness: 0.5,
+      metalness: 0.6
+    });
+    const deckPlateMesh = new THREE.Mesh(deckPlateGeo, deckPlateMat);
+    deckPlateMesh.position.y = 0.136;
+    this.proceduralGroup.add(deckPlateMesh);
 
-    // ESP32 Status LED (Glowing Blue)
-    const ledGeo = new THREE.SphereGeometry(0.006, 8, 8);
-    const ledMat = new THREE.MeshBasicMaterial({ color: 0x00d2ff });
-    const ledMesh = new THREE.Mesh(ledGeo, ledMat);
-    ledMesh.position.set(0.05, 0.115, -0.05);
-    this.proceduralGroup.add(ledMesh);
+    // Glowing LED Round Eyes (48mm round rings on front wall)
+    const eyeRingGeo = new THREE.RingGeometry(0.012, 0.022, 24);
+    const eyeRingMat = new THREE.MeshBasicMaterial({
+      color: 0x00f0ff,
+      side: THREE.DoubleSide
+    });
+    const leftEyeRing = new THREE.Mesh(eyeRingGeo, eyeRingMat);
+    leftEyeRing.position.set(-0.048, 0.088, 0.141);
+    this.proceduralGroup.add(leftEyeRing);
 
-    // Battery Pack
-    const battGeo = new THREE.BoxGeometry(0.09, 0.035, 0.13);
-    const battMat = new THREE.MeshStandardMaterial({ color: 0x111827, roughness: 0.8 });
-    const battMesh = new THREE.Mesh(battGeo, battMat);
-    battMesh.position.set(-0.03, 0.12, -0.05);
-    this.proceduralGroup.add(battMesh);
+    const rightEyeRing = new THREE.Mesh(eyeRingGeo, eyeRingMat);
+    rightEyeRing.position.set(0.048, 0.088, 0.141);
+    this.proceduralGroup.add(rightEyeRing);
+
+    // White Pressurized Water Tank Cylinder (white Ø80 x 229 mm horizontal on rear deck)
+    const tankRadius = 0.038;
+    const tankLength = 0.20;
+    const tankGeo = new THREE.CylinderGeometry(tankRadius, tankRadius, tankLength, 24);
+    tankGeo.rotateZ(Math.PI / 2);
+    const tankMat = new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.2,
+      metalness: 0.15
+    });
+    const tankMesh = new THREE.Mesh(tankGeo, tankMat);
+    tankMesh.position.set(0, 0.182, -0.05);
+    tankMesh.castShadow = true;
+    this.proceduralGroup.add(tankMesh);
+
+    // Tank Mounting Brackets
+    const tankBracketMat = new THREE.MeshStandardMaterial({ color: 0x334155, metalness: 0.7 });
+    [-0.065, 0.065].forEach(x => {
+      const bGeo = new THREE.BoxGeometry(0.016, 0.04, 0.06);
+      const bMesh = new THREE.Mesh(bGeo, tankBracketMat);
+      bMesh.position.set(x, 0.16, -0.05);
+      this.proceduralGroup.add(bMesh);
+    });
+
+    // Yellow Nozzle Hose Tube (routed from tank to turret)
+    const hoseCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(-0.085, 0.182, -0.05),
+      new THREE.Vector3(-0.095, 0.185, 0.02),
+      new THREE.Vector3(-0.05, 0.175, 0.07),
+      new THREE.Vector3(0, 0.16, 0.09)
+    ]);
+    const hoseGeo = new THREE.TubeGeometry(hoseCurve, 16, 0.009, 8, false);
+    const hoseMat = new THREE.MeshStandardMaterial({
+      color: 0xf59e0b, // Yellow hose
+      roughness: 0.6,
+      metalness: 0.2
+    });
+    const hoseMesh = new THREE.Mesh(hoseGeo, hoseMat);
+    this.proceduralGroup.add(hoseMesh);
+
+    // Top Amber Beacon Dome (pulses on alert / fire detection)
+    const beaconBaseGeo = new THREE.CylinderGeometry(0.018, 0.022, 0.01, 16);
+    const beaconBaseMat = new THREE.MeshStandardMaterial({ color: 0x1f2937, metalness: 0.8 });
+    const beaconBase = new THREE.Mesh(beaconBaseGeo, beaconBaseMat);
+    beaconBase.position.set(0.075, 0.145, 0.045);
+    this.proceduralGroup.add(beaconBase);
+
+    const beaconDomeGeo = new THREE.SphereGeometry(0.015, 16, 16, 0, Math.PI * 2, 0, Math.PI / 2);
+    this.beaconMat = new THREE.MeshStandardMaterial({
+      color: 0xffb703,
+      emissive: 0xff9900,
+      emissiveIntensity: 0.6,
+      roughness: 0.1,
+      transparent: true,
+      opacity: 0.92
+    });
+    this.beaconDome = new THREE.Mesh(beaconDomeGeo, this.beaconMat);
+    this.beaconDome.position.set(0.075, 0.150, 0.045);
+    this.proceduralGroup.add(this.beaconDome);
 
     // -------------------------------------------------------------------------
     // 2. Wheels (4WD Differential/Skid Drive)
@@ -538,6 +608,13 @@ class RobotModel {
       w.angle += w.isLeft ? leftSpin : rightSpin;
       w.group.rotation.x = w.angle;
     });
+
+    // Pulse Top Amber Beacon Dome on alert / fire spray
+    if (this.beaconMat) {
+      const pulseSpeed = this.solenoidActive ? 14.0 : 4.5;
+      const intensity = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(Date.now() * 0.001 * pulseSpeed));
+      this.beaconMat.emissiveIntensity = intensity;
+    }
   }
 
   /**

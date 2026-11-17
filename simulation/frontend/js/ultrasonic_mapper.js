@@ -417,8 +417,8 @@ const COLLISION_EMERGENCY_INCHES = 6.0;    // ~0.152m / 15.2cm (emergency backou
 const CORRIDOR_HALF_WIDTH_INCHES = 5.5;    // ~0.140m / 14.0cm (allows 0.8m doorway transit)
 
 class UltrasonicMapper {
-  constructor(canvasId = 'map-canvas') {
-    this.canvas = document.getElementById(canvasId);
+  constructor(canvasId = 'dashboard-map-canvas') {
+    this.canvas = document.getElementById(canvasId) || document.getElementById('dashboard-map-canvas') || document.getElementById('map-canvas');
     if (!this.canvas) {
       console.warn(`[UltrasonicMapper] Canvas #${canvasId} not found`);
       return;
@@ -455,6 +455,12 @@ class UltrasonicMapper {
     this.circulationDetector = new CirculationDetector();
     this.currentFrontierGoal = null;
     this.lastFrontierCompute = 0;
+
+    // Physical Hardware Dead-Reckoning & Breadcrumbs
+    this.physicalPose = { x: 0.0, z: 0.0, yaw: 0.0 };
+    this.lastPhysicalTelemTime = 0;
+    this.breadcrumbs = [];
+    this.maxBreadcrumbs = 80;
   }
 
   resetMap() {
@@ -463,6 +469,73 @@ class UltrasonicMapper {
     this.circulationDetector.reset();
     this.currentFrontierGoal = null;
     this.latchedWorldPath = null;
+    this.physicalPose = { x: 0.0, z: 0.0, yaw: 0.0 };
+    this.breadcrumbs = [];
+  }
+
+  /**
+   * Ingests real-time telemetry from the physical ESP32 (distances, motor PWMs, MPU-6050 yaw).
+   * Integrates dead-reckoning odometry and projects ultrasonic rays into the occupancy grid.
+   */
+  ingestPhysicalTelemetry(distF = 300, distL = 300, distR = 300, yawDeg = 0, leftPwm = 0, rightPwm = 0, nowMs = null) {
+    const now = nowMs || Date.now();
+    const dt = (this.lastPhysicalTelemTime > 0) ? Math.min(0.25, Math.max(0.01, (now - this.lastPhysicalTelemTime) / 1000.0)) : 0.05;
+    this.lastPhysicalTelemTime = now;
+
+    // Set heading from MPU-6050 (converted to radians)
+    const yawRad = (Number(yawDeg) || 0) * (Math.PI / 180.0);
+    this.physicalPose.yaw = yawRad;
+
+    // Dead-reckoning velocity estimation from motor PWMs
+    const avgPwm = ((Number(leftPwm) || 0) + (Number(rightPwm) || 0)) / 2.0;
+    const speed = (Math.abs(avgPwm) > 60) ? (avgPwm / 255.0) * 0.42 : 0.0; // max ~0.42 m/s
+
+    // Displace robot in direction of heading
+    this.physicalPose.x += speed * Math.sin(yawRad) * dt;
+    this.physicalPose.z += speed * Math.cos(yawRad) * dt;
+
+    // Clamp within 9m arena boundaries
+    const maxBound = (this.explorationGrid.sizeMeters / 2) - 0.25;
+    this.physicalPose.x = Math.max(-maxBound, Math.min(maxBound, this.physicalPose.x));
+    this.physicalPose.z = Math.max(-maxBound, Math.min(maxBound, this.physicalPose.z));
+
+    // Record footprint in exploration grid
+    this.explorationGrid.recordRobotPose(this.physicalPose.x, this.physicalPose.z);
+
+    // Save breadcrumb trajectory history
+    if (this.breadcrumbs.length === 0 || Math.hypot(this.physicalPose.x - this.breadcrumbs[this.breadcrumbs.length - 1].x, this.physicalPose.z - this.breadcrumbs[this.breadcrumbs.length - 1].z) > 0.08) {
+      this.breadcrumbs.push({ x: this.physicalPose.x, z: this.physicalPose.z, time: now });
+      if (this.breadcrumbs.length > this.maxBreadcrumbs) this.breadcrumbs.shift();
+    }
+
+    // Project 3 Ultrasonic Beams into Occupancy Grid & Point Cloud
+    const beams = [
+      { dist: Number(distF), angle: yawRad },                  // Front (0 deg)
+      { dist: Number(distL), angle: yawRad - Math.PI / 4.0 },  // Left (-45 deg)
+      { dist: Number(distR), angle: yawRad + Math.PI / 4.0 }   // Right (+45 deg)
+    ];
+
+    beams.forEach(b => {
+      const d = b.dist;
+      if (d > 4.0 && d < 280.0) {
+        const dMeters = d / 100.0;
+        const hitX = this.physicalPose.x + dMeters * Math.sin(b.angle);
+        const hitZ = this.physicalPose.z + dMeters * Math.cos(b.angle);
+
+        // Mark hit cell as OCCUPIED in exploration grid
+        const gHit = this.explorationGrid.worldToGrid(hitX, hitZ);
+        if (gHit) {
+          this.explorationGrid.setCell(gHit.gx, gHit.gz, 2);
+        }
+
+        // Ray-trace intermediate cells as FREE
+        this.explorationGrid.hasLineOfSight(this.physicalPose.x, this.physicalPose.z, hitX, hitZ);
+
+        // Add to transient point cloud
+        if (this.pointCloud.length > 250) this.pointCloud.shift();
+        this.pointCloud.push({ worldX: hitX, worldZ: hitZ, time: now });
+      }
+    });
   }
 
   /**
@@ -1736,6 +1809,163 @@ class UltrasonicMapper {
     }
 
     return avoidance;
+  }
+
+  /**
+   * Renders high-definition Tactical SLAM Occupancy Grid on any target canvas.
+   * Visualizes explored territory, obstacle walls, robot breadcrumb path, heading, and 3-beam ultrasonic cones.
+   */
+  drawTacticalSLAM(canvas, robotPos = null, robotYaw = 0, distF = 300, distL = 300, distR = 300, isPhysical = false, headingDeg = 0) {
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // 1. Clear background with deep stealth aesthetic
+    ctx.fillStyle = '#070b12';
+    ctx.fillRect(0, 0, w, h);
+
+    // 2. Tactical radar grid lines
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.04)';
+    ctx.lineWidth = 1;
+    const step = 20;
+    for (let x = 0; x < w; x += step) {
+      ctx.beginPath();
+      ctx.moveTo(x, 0);
+      ctx.lineTo(x, h);
+      ctx.stroke();
+    }
+    for (let y = 0; y < h; y += step) {
+      ctx.beginPath();
+      ctx.moveTo(0, y);
+      ctx.lineTo(w, y);
+      ctx.stroke();
+    }
+
+    const grid = this.explorationGrid;
+    const dim = grid.gridWidth;
+    const cellW = w / dim;
+    const cellH = h / dim;
+
+    // 3. Render Occupancy Grid Cells
+    for (let gz = 0; gz < dim; gz++) {
+      for (let gx = 0; gx < dim; gx++) {
+        const state = grid.cells[gz * dim + gx];
+        if (state === 1) { // Explored Free Space
+          ctx.fillStyle = 'rgba(0, 240, 255, 0.14)';
+          ctx.fillRect(gx * cellW, gz * cellH, cellW, cellH);
+        } else if (state === 2) { // Detected Obstacle Wall
+          ctx.fillStyle = 'rgba(255, 51, 75, 0.85)';
+          ctx.fillRect(gx * cellW, gz * cellH, cellW, cellH);
+        }
+      }
+    }
+
+    // Determine robot coordinates (use physical dead-reckoning pose if in hardware mode)
+    const pos = isPhysical ? this.physicalPose : (robotPos || { x: 0, z: 0 });
+    const yaw = isPhysical ? this.physicalPose.yaw : (robotYaw || 0);
+
+    // Convert world (-4.5 to +4.5m) to canvas (0 to w, 0 to h)
+    const rx = ((pos.x + grid.halfSize) / grid.sizeMeters) * w;
+    const ry = ((pos.z + grid.halfSize) / grid.sizeMeters) * h;
+
+    // 4. Render Breadcrumb Trajectory History
+    const crumbs = isPhysical ? this.breadcrumbs : (this.circulationDetector.pathHistory || []);
+    if (crumbs.length > 1) {
+      ctx.strokeStyle = 'rgba(0, 240, 255, 0.45)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let i = 0; i < crumbs.length; i++) {
+        const bx = ((crumbs[i].x + grid.halfSize) / grid.sizeMeters) * w;
+        const by = ((crumbs[i].z + grid.halfSize) / grid.sizeMeters) * h;
+        if (i === 0) ctx.moveTo(bx, by);
+        else ctx.lineTo(bx, by);
+      }
+      ctx.stroke();
+    }
+
+    // 5. Render 3-Beam Ultrasonic Range Cones
+    const cones = [
+      { dist: Number(distF), angle: yaw, color: distF < 25 ? '#ef4444' : distF < 45 ? '#f59e0b' : '#00f0ff' },
+      { dist: Number(distL), angle: yaw - Math.PI / 4, color: distL < 25 ? '#ef4444' : distL < 45 ? '#f59e0b' : '#38bdf8' },
+      { dist: Number(distR), angle: yaw + Math.PI / 4, color: distR < 25 ? '#ef4444' : distR < 45 ? '#f59e0b' : '#38bdf8' }
+    ];
+
+    cones.forEach(c => {
+      const dMeters = Math.min(3.0, (c.dist || 300) / 100.0);
+      const beamLen = (dMeters / grid.sizeMeters) * w;
+      const endX = rx + Math.sin(c.angle) * beamLen;
+      const endY = ry + Math.cos(c.angle) * beamLen;
+
+      // Beam line
+      ctx.strokeStyle = c.color;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(rx, ry);
+      ctx.lineTo(endX, endY);
+      ctx.stroke();
+
+      // Hit point dot
+      ctx.fillStyle = c.color;
+      ctx.beginPath();
+      ctx.arc(endX, endY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    });
+
+    // 6. Render Hexagonal Robot Icon (EMBER Style)
+    ctx.save();
+    ctx.translate(rx, ry);
+    ctx.rotate(-yaw);
+
+    // Hexagonal Chassis Body
+    const rSize = 7;
+    ctx.fillStyle = '#d9382b'; // EMBER Rescue Red
+    ctx.beginPath();
+    for (let i = 0; i < 6; i++) {
+      const a = (i * Math.PI) / 3;
+      const hx = rSize * Math.cos(a);
+      const hy = rSize * Math.sin(a);
+      if (i === 0) ctx.moveTo(hx, hy);
+      else ctx.lineTo(hx, hy);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#ffc21a'; // Yellow hazard border
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Direction Heading Pointer
+    ctx.fillStyle = '#00f0ff';
+    ctx.beginPath();
+    ctx.moveTo(0, rSize + 4);
+    ctx.lineTo(-3, rSize - 1);
+    ctx.lineTo(3, rSize - 1);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.restore();
+
+    // 7. Tactical SLAM HUD Text Overlay
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+    ctx.font = 'bold 9px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText('TACTICAL SLAM 45x45', 6, 12);
+
+    ctx.textAlign = 'right';
+    const cov = this.explorationGrid.getCoveragePercentage();
+    ctx.fillStyle = '#00f0ff';
+    ctx.fillText(`COV: ${cov}%`, w - 6, 12);
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
+    ctx.font = '8px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(`X:${pos.x >= 0 ? '+' : ''}${pos.x.toFixed(1)}m Z:${pos.z >= 0 ? '+' : ''}${pos.z.toFixed(1)}m`, 6, h - 5);
+
+    ctx.textAlign = 'right';
+    const hdg = (headingDeg !== undefined) ? Number(headingDeg) : ((yaw * 180 / Math.PI) % 360);
+    ctx.fillText(`HDG: ${hdg.toFixed(0)}°`, w - 6, h - 5);
   }
 }
 

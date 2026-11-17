@@ -50,13 +50,13 @@ class UIController {
 
     // Optical flame proximity estimator & 2D radar mapper
     this.recentBboxAreas = [];
-    this.mapper = null;
+    this.mapper = (typeof UltrasonicMapper !== 'undefined') ? new UltrasonicMapper('dashboard-map-canvas') : null;
 
     // Dashboard & Page Navigation
     this.activePage = 'dashboard';
     this.piLogs = [];
     this.espLogs = [];
-    this.maxLogs = 300;
+    this.maxLogs = 120;
     this.missionStartTime = Date.now();
     this.firesExtinguishedCount = 0;
     this.telemetryHistory = [];
@@ -146,15 +146,16 @@ class UIController {
   }
 
   bindDomElements() {
-    // Physical Hardware Port Scan Trigger
-    document.getElementById('btn-scan-hw')?.addEventListener('click', () => {
-      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
-        this.socket.send(JSON.stringify({ type: 'SCAN_PORTS' }));
-        const btn = document.getElementById('btn-scan-hw');
-        if (btn) {
-          btn.textContent = '⏳ Scanning...';
-          setTimeout(() => { if (btn) btn.textContent = '🔄 Scan Ports'; }, 1500);
-        }
+    // Session Telemetry Log Download Trigger
+    document.getElementById('btn-download-logs')?.addEventListener('click', () => {
+      this.downloadSessionLogs();
+    });
+
+    // Tactical SLAM Mini-Map Reset Trigger
+    document.getElementById('btn-reset-map')?.addEventListener('click', () => {
+      if (this.mapper) {
+        this.mapper.resetMap();
+        this.drawTacticalMiniMap();
       }
     });
 
@@ -786,7 +787,17 @@ class UIController {
       if (this.sensors) {
         this.sensors.setFromPhysicalTelemetry(data);
       }
-      // Keep tactical radar mapper in sync with real physical distances
+      // Keep tactical SLAM mapper synchronized with real physical telemetry & MPU-6050 heading
+      if (this.mapper) {
+        this.mapper.ingestPhysicalTelemetry(
+          data.dist_front,
+          data.dist_left,
+          data.dist_right,
+          data.yaw !== undefined ? data.yaw : (data.yaw_deg !== undefined ? data.yaw_deg : 0),
+          data.left_pwm,
+          data.right_pwm
+        );
+      }
       this.updateRadarMap({
         dist_front: data.dist_front,
         dist_left: data.dist_left,
@@ -1291,7 +1302,7 @@ class UIController {
 
   updateRadarMap(telem) {
     if (!this.mapper && typeof UltrasonicMapper !== 'undefined') {
-      this.mapper = new UltrasonicMapper('map-canvas');
+      this.mapper = new UltrasonicMapper('dashboard-map-canvas');
     }
     if (this.mapper) {
       const target = this.realVisionTarget || telem.target;
@@ -2598,7 +2609,8 @@ class UIController {
       return;
     }
 
-    term.innerHTML = filtered.map((e) => {
+    const displayPi = filtered.slice(-80);
+    term.innerHTML = displayPi.map((e) => {
       const t = e.timestamp ? new Date(e.timestamp * 1000) : new Date();
       const timeStr = t.toLocaleTimeString();
       const badgeCls = (e.source || 'system').toLowerCase();
@@ -2634,7 +2646,8 @@ class UIController {
       return;
     }
 
-    term.innerHTML = filtered.map((e) => {
+    const displayEsp = filtered.slice(-80);
+    term.innerHTML = displayEsp.map((e) => {
       const t = e.timestamp ? new Date(e.timestamp * 1000) : new Date();
       const timeStr = t.toLocaleTimeString();
       const msg = e.message || '';
@@ -3001,6 +3014,40 @@ class UIController {
       document.getElementById('dash-imu-temp').textContent = (telem.temp_c !== undefined) ? `${Number(telem.temp_c).toFixed(1)} °C` : '-- °C';
     }
 
+    // Update Compass Rose Needle & Cardinal Direction
+    const compassNeedle = document.getElementById('dash-compass-needle');
+    const compassHeading = document.getElementById('dash-compass-heading');
+    const compassCardinal = document.getElementById('dash-compass-cardinal');
+    if (compassNeedle) {
+      const yawVal = (curYaw !== undefined && curYaw !== '--' && !isNaN(curYaw)) ? Number(curYaw) : 0;
+      let norm = ((yawVal % 360) + 360) % 360;
+      compassNeedle.style.transform = `rotate(${yawVal}deg)`;
+      if (compassHeading) compassHeading.textContent = Math.round(norm).toString().padStart(3, '0');
+      if (compassCardinal) {
+        const directions = ['NORTH [N]', 'N-EAST [NE]', 'EAST [E]', 'S-EAST [SE]', 'SOUTH [S]', 'S-WEST [SW]', 'WEST [W]', 'N-WEST [NW]'];
+        const idx = Math.round(norm / 45) % 8;
+        compassCardinal.textContent = directions[idx];
+      }
+    }
+
+    // Update Segmented Readiness Meter & Battery
+    const scoreEl = document.getElementById('hud-readiness-score');
+    const meterEl = document.getElementById('segmented-readiness-meter');
+    if (scoreEl && meterEl) {
+      let activeCount = 0;
+      if (this.physicalHardwareConnected) activeCount += 4;
+      if (telem.mpu_connected) activeCount += 2;
+      if (this.latestCameraStatus && this.latestCameraStatus.connected !== false) activeCount += 2;
+      if (telem.dist_front !== undefined && telem.dist_front > 0) activeCount += 2;
+      activeCount = Math.min(10, activeCount);
+      const pct = activeCount * 10;
+      scoreEl.textContent = `${pct}%`;
+      const segments = meterEl.children;
+      for (let i = 0; i < segments.length; i++) {
+        segments[i].className = i < activeCount ? (pct > 70 ? 'meter-segment active-green' : 'meter-segment active-amber') : 'meter-segment';
+      }
+    }
+
     // 3. Mini-Map Drawing (10 Hz)
     this.minimapTimer = (this.minimapTimer || 0) + (dt || 0.016);
     if (this.minimapTimer >= 0.10) {
@@ -3099,75 +3146,33 @@ class UIController {
 
   drawTacticalMiniMap() {
     const canvas = document.getElementById('dashboard-map-canvas');
-    if (!canvas || !this.mapper || !this.mapper.explorationGrid) return;
+    if (!canvas) return;
+    if (!this.mapper && typeof UltrasonicMapper !== 'undefined') {
+      this.mapper = new UltrasonicMapper('dashboard-map-canvas');
+    }
+    if (!this.mapper || !this.mapper.explorationGrid) return;
+
     if (canvas.parentElement && canvas.parentElement.clientWidth > 0) {
-      const targetW = Math.min(320, canvas.parentElement.clientWidth);
+      const targetW = Math.min(360, canvas.parentElement.clientWidth);
       if (Math.abs(canvas.width - targetW) > 5) canvas.width = targetW;
     }
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
 
-    const w = canvas.width;
-    const h = canvas.height;
-    ctx.fillStyle = '#05080e';
-    ctx.fillRect(0, 0, w, h);
+    const isPhysical = !!this.physicalHardwareConnected;
+    const telem = this.lastPhysicalTelem || {};
+    const rpos = isPhysical ? (this.mapper.physicalPose || { x: 0, z: 0 }) : (this.robot ? this.robot.position : { x: 0, z: 0 });
+    const ryaw = isPhysical ? (this.mapper.physicalPose ? this.mapper.physicalPose.yaw : 0) : (this.robot ? this.robot.yaw : 0);
+    const distF = telem.dist_front !== undefined ? telem.dist_front : (this.sensors ? this.sensors.ultrasonicFront : 300);
+    const distL = telem.dist_left !== undefined ? telem.dist_left : (this.sensors ? this.sensors.ultrasonicLeft : 300);
+    const distR = telem.dist_right !== undefined ? telem.dist_right : (this.sensors ? this.sensors.ultrasonicRight : 300);
+    const headingDeg = telem.yaw !== undefined ? Number(telem.yaw) : (ryaw * 180 / Math.PI);
 
-    const grid = this.mapper.explorationGrid;
-    const dim = grid.gridWidth;
-    const cellSizeX = w / dim;
-    const cellSizeY = h / dim;
-
-    // Draw grid cells
-    for (let gy = 0; gy < dim; gy++) {
-      for (let gx = 0; gx < dim; gx++) {
-        const state = grid.cells[gy * dim + gx];
-        if (state === 1) { // Free / Explored
-          ctx.fillStyle = 'rgba(0, 210, 255, 0.15)';
-          ctx.fillRect(gx * cellSizeX, gy * cellSizeY, cellSizeX, cellSizeY);
-        } else if (state === 2) { // Occupied Wall
-          ctx.fillStyle = 'rgba(255, 51, 75, 0.85)';
-          ctx.fillRect(gx * cellSizeX, gy * cellSizeY, cellSizeX, cellSizeY);
-        }
-      }
+    // Update coordinates badge
+    const poseBadge = document.getElementById('dash-map-pose');
+    if (poseBadge) {
+      poseBadge.textContent = `X:${rpos.x.toFixed(1)} Z:${rpos.z.toFixed(1)} Y:${Math.round(headingDeg)}°`;
     }
 
-    // Draw Robot Position & Heading
-    const rpos = this.robot ? this.robot.position : { x: 0, z: 0 };
-    const ryaw = this.robot ? this.robot.yaw : 0;
-    const rx = ((rpos.x + grid.halfSize) / (grid.halfSize * 2)) * w;
-    const ry = ((rpos.z + grid.halfSize) / (grid.halfSize * 2)) * h;
-
-    ctx.save();
-    ctx.translate(rx, ry);
-    ctx.rotate(ryaw);
-
-    // Robot body
-    ctx.fillStyle = '#00d2ff';
-    ctx.beginPath();
-    ctx.arc(0, 0, 5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Direction pointer
-    ctx.strokeStyle = '#fff';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(0, 10);
-    ctx.stroke();
-
-    ctx.restore();
-
-    // Draw Frontiers if available
-    if (this.mapper.lastFrontierGoals && this.mapper.lastFrontierGoals.length > 0) {
-      ctx.fillStyle = '#ffd600';
-      for (const fg of this.mapper.lastFrontierGoals) {
-        const fx = ((fg.x + grid.halfSize) / (grid.halfSize * 2)) * w;
-        const fy = ((fg.z + grid.halfSize) / (grid.halfSize * 2)) * h;
-        ctx.beginPath();
-        ctx.arc(fx, fy, 3, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
+    this.mapper.drawTacticalSLAM(canvas, rpos, ryaw, distF, distL, distR, isPhysical, headingDeg);
   }
 
   renderTelemetryChart() {
@@ -3261,6 +3266,37 @@ class UIController {
       ctx.fillStyle = '#00e676';
       ctx.fillText('■ Yaw (0°..360°)', w - 65, 15);
     }
+  }
+
+  downloadSessionLogs() {
+    const exportData = {
+      generator: 'BANTAY-SUNOG SAGIP-X Telemetry Suite',
+      sessionExportTime: new Date().toISOString(),
+      hardwareLink: {
+        connected: this.physicalHardwareConnected,
+        port: this.physicalHardwarePort || 'None Detected',
+        baud: this.physicalHardwareBaud
+      },
+      piLogsCount: this.piLogs.length,
+      espLogsCount: this.espLogs.length,
+      historyCount: this.telemetryHistory.length,
+      piLogs: this.piLogs,
+      espLogs: this.espLogs,
+      telemetryHistory: this.telemetryHistory
+    };
+
+    const jsonStr = JSON.stringify(exportData, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const d = new Date();
+    const dateStr = d.toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    a.href = url;
+    a.download = `bantay_sunog_telemetry_${dateStr}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   }
 }
 

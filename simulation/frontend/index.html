@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>BANTAY-SUNOG: Operations Dashboard & 3D Digital Twin</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=12">
+  <link rel="stylesheet" href="css/dashboard.css?v=15">
   <!-- Three.js & Controls from trusted CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -68,6 +68,7 @@
         <button id="btn-mission-pause" class="hud-btn-mission pause" title="Halt in Safe Standby (STATE_IDLE)">⏸ STANDBY</button>
       </div>
 
+      <button id="btn-download-logs" class="btn-hud" title="Download all ESP32 and Pi telemetry logs as JSON"><span class="btn-icon">💾</span> EXPORT LOGS</button>
       <button id="btn-global-estop" class="btn-tool danger" style="padding: 6px 12px; font-weight: bold; letter-spacing: 1px;">🛑 E-STOP</button>
     </div>
   </header>
@@ -123,6 +124,29 @@
         <div id="kpi-map-coverage" class="kpi-val">0%</div>
         <div class="kpi-subtext">Elapsed: <span id="kpi-mission-time" style="color: #fff;">00:00</span> | Exting: <span id="kpi-extinguished-count" style="color: #fff;">0</span></div>
       </div>
+
+      <div class="kpi-card" id="kpi-card-power">
+        <div class="kpi-header">
+          <span class="kpi-label">SYS READINESS & POWER</span>
+          <span class="kpi-icon">⚡</span>
+        </div>
+        <div class="hud-readiness-cluster" style="margin-top: 4px;">
+          <div class="segmented-meter" id="segmented-readiness-meter">
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+            <div class="meter-segment active-green"></div>
+          </div>
+          <span id="hud-readiness-score" class="hud-readiness-val">100%</span>
+        </div>
+        <div class="kpi-subtext">LiPo: <span id="dash-battery-volt" style="color: #00ff88; font-weight: bold;">7.8V</span> (<span id="dash-battery-pct">95%</span>) | Link: <span id="kpi-link-rate" style="color: var(--accent-cyan);">10 Hz</span></div>
+      </div>
     </section>
 
     <!-- Row 2: Physical Hardware Connection Banner (Slim Contextual Bar) -->
@@ -133,7 +157,7 @@
         <div id="hw-banner-sub" class="hw-banner-sub">Dashboard readings are reserved strictly for physical hardware. Connect your ESP32-WROOM via USB/UART (/dev/ttyAMA0 or COM port) to view live sensor telemetry.</div>
       </div>
       <div class="hw-banner-actions">
-        <button id="btn-scan-hw" class="btn-tool" style="font-size: 11px; padding: 4px 10px; font-weight: 600;">🔄 Scan Ports</button>
+        <span class="dash-badge live-badge" style="background: rgba(0, 240, 255, 0.15); border-color: rgba(0, 240, 255, 0.3); color: var(--accent-cyan); font-family: var(--font-mono); font-size: 11px;">AUTO-LINK: 192.168.137.200:8888</span>
       </div>
     </div>
 
@@ -208,13 +232,17 @@
         <div class="dash-panel minimap-panel">
           <div class="dash-panel-title">
             <span>🗺️ Tactical SLAM Mini-Map</span>
-            <span id="dash-map-frontier-badge" class="dash-badge">45x45 GRID</span>
+            <div style="display: flex; gap: 6px; align-items: center;">
+              <span id="dash-map-pose" class="dash-badge" style="font-family: var(--font-mono); font-size: 9px; color: var(--accent-cyan);">X:0.0 Z:0.0 Y:0°</span>
+              <button id="btn-reset-map" class="term-btn" style="padding: 2px 6px; font-size: 10px;" title="Reset Occupancy Grid & Dead Reckoning">↺ Clear</button>
+              <span id="dash-map-frontier-badge" class="dash-badge">45x45 GRID</span>
+            </div>
           </div>
           <div class="minimap-container">
-            <canvas id="dashboard-map-canvas" width="300" height="160"></canvas>
+            <canvas id="dashboard-map-canvas" width="340" height="240"></canvas>
             <div class="minimap-legend">
               <div class="legend-item"><div class="legend-box" style="background: var(--accent-cyan);"></div> Robot</div>
-              <div class="legend-item"><div class="legend-box" style="background: rgba(0, 210, 255, 0.2);"></div> Explored</div>
+              <div class="legend-item"><div class="legend-box" style="background: rgba(0, 240, 255, 0.25);"></div> Explored</div>
               <div class="legend-item"><div class="legend-box" style="background: var(--accent-red);"></div> Walls</div>
               <div class="legend-item"><div class="legend-box" style="background: var(--accent-yellow);"></div> Frontiers</div>
             </div>
@@ -309,6 +337,20 @@
             <div class="section-label" style="display: flex; justify-content: space-between; align-items: center; margin-top: 10px; margin-bottom: 6px;">
               <span>🧭 MPU-6050 6-AXIS IMU (I2C 0x68):</span>
               <span id="dash-imu-status" class="dash-badge" style="font-size: 9px; padding: 1px 6px; background: rgba(0, 240, 255, 0.15); color: var(--accent-cyan);">OFFLINE</span>
+            </div>
+
+            <!-- Tactical Compass Rose & Heading Indicator -->
+            <div class="compass-rose-container">
+              <div class="compass-dial-wrap">
+                <div class="compass-ticks"></div>
+                <div id="dash-compass-needle" class="compass-needle"></div>
+                <div class="compass-center-cap"></div>
+              </div>
+              <div class="compass-readout">
+                <div class="imu-cell-label">HEADING (MPU-6050 YAW)</div>
+                <div class="heading-num-huge"><span id="dash-compass-heading">000</span><span>°</span></div>
+                <div id="dash-compass-cardinal" style="font-family: var(--font-mono); font-size: 11px; color: var(--accent-cyan); font-weight: 700;">NORTH [N]</div>
+              </div>
             </div>
 
             <div class="imu-attitude-grid">

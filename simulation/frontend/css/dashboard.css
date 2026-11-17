@@ -2046,5 +2046,506 @@ html, body {
   color: var(--accent-cyan);
 }
 
+/* ==========================================================================
+   AEROSPACE TACTICAL TELEMETRY DECK (High-End Cockpit Styling)
+   ========================================================================== */
 
+.aerospace-cockpit-grid {
+  display: grid;
+  grid-template-columns: 320px 1fr 340px;
+  grid-template-rows: auto 1fr;
+  gap: 16px;
+  padding: 16px;
+  min-height: calc(100vh - 70px);
+  background: radial-gradient(circle at 50% 20%, rgba(10, 25, 40, 0.8) 0%, rgba(5, 10, 16, 0.98) 100%),
+              linear-gradient(rgba(0, 240, 255, 0.03) 1px, transparent 1px),
+              linear-gradient(90deg, rgba(0, 240, 255, 0.03) 1px, transparent 1px);
+  background-size: 100% 100%, 32px 32px, 32px 32px;
+  box-sizing: border-box;
+}
 
+@media (max-width: 1400px) {
+  .aerospace-cockpit-grid {
+    grid-template-columns: 280px 1fr 300px;
+  }
+}
+
+@media (max-width: 1100px) {
+  .aerospace-cockpit-grid {
+    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+  }
+}
+
+/* Top Aerospace Status Bar */
+.aerospace-top-hud {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  background: rgba(10, 18, 28, 0.85);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(0, 240, 255, 0.22);
+  border-radius: 8px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(0, 240, 255, 0.2);
+}
+
+.hud-callsign-box {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.hud-badge-tag {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  padding: 4px 8px;
+  background: rgba(217, 56, 43, 0.2);
+  border: 1px solid rgba(217, 56, 43, 0.6);
+  color: #ff5242;
+  border-radius: 4px;
+  text-shadow: 0 0 8px rgba(255, 82, 66, 0.5);
+}
+
+.hud-callsign-title {
+  font-family: var(--font-display, "Rajdhani", sans-serif);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 2px;
+  color: #e6f6ff;
+  text-transform: uppercase;
+}
+
+.hud-callsign-sub {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  letter-spacing: 1px;
+}
+
+/* Segmented System Readiness Bar */
+.hud-readiness-cluster {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.readiness-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+}
+
+.segmented-meter {
+  display: flex;
+  gap: 3px;
+  align-items: center;
+}
+
+.meter-segment {
+  width: 7px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  transition: background-color 0.25s, box-shadow 0.25s;
+}
+
+.meter-segment.active-green {
+  background: #00ff88;
+  box-shadow: 0 0 8px rgba(0, 255, 136, 0.7);
+}
+
+.meter-segment.active-amber {
+  background: #ffb800;
+  box-shadow: 0 0 8px rgba(255, 184, 0, 0.7);
+}
+
+.meter-segment.active-red {
+  background: #ff3344;
+  box-shadow: 0 0 8px rgba(255, 51, 68, 0.8);
+}
+
+.hud-readiness-val {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: #00ff88;
+  min-width: 44px;
+}
+
+/* HUD Action Controls */
+.hud-actions-group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.btn-hud {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 14px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  background: rgba(0, 240, 255, 0.07);
+  color: #a4e5ff;
+}
+
+.btn-hud:hover {
+  background: rgba(0, 240, 255, 0.2);
+  color: #ffffff;
+  border-color: #00f0ff;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.35);
+  transform: translateY(-1px);
+}
+
+.btn-hud-primary {
+  background: rgba(0, 255, 136, 0.12);
+  border-color: rgba(0, 255, 136, 0.45);
+  color: #55ffaa;
+}
+
+.btn-hud-primary:hover {
+  background: rgba(0, 255, 136, 0.25);
+  border-color: #00ff88;
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(0, 255, 136, 0.45);
+}
+
+.btn-hud-danger {
+  background: rgba(255, 60, 60, 0.12);
+  border-color: rgba(255, 60, 60, 0.4);
+  color: #ff8888;
+}
+
+.btn-hud-danger:hover {
+  background: rgba(255, 60, 60, 0.25);
+  border-color: #ff3344;
+  color: #fff;
+  box-shadow: 0 0 14px rgba(255, 51, 68, 0.45);
+}
+
+/* Aerospace Card styling */
+.aero-card {
+  background: rgba(9, 15, 24, 0.88);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(0, 240, 255, 0.14);
+  border-radius: 8px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
+  margin-bottom: 14px;
+}
+
+.aero-card:last-child {
+  margin-bottom: 0;
+}
+
+.aero-card::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 14px;
+  height: 2px;
+  background: #00f0ff;
+}
+
+.aero-card::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 2px;
+  height: 14px;
+  background: #00f0ff;
+}
+
+.aero-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.aero-card-title {
+  font-family: var(--font-display, "Rajdhani", sans-serif);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 1.5px;
+  color: #7ce3ff;
+  text-transform: uppercase;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aero-card-badge {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(0, 240, 255, 0.1);
+  color: var(--accent-cyan);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+}
+
+/* Compass Rose Widget */
+.compass-rose-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  padding: 10px 0;
+}
+
+.compass-dial-wrap {
+  position: relative;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  border: 2px solid rgba(0, 240, 255, 0.25);
+  background: radial-gradient(circle, rgba(0, 240, 255, 0.05) 0%, rgba(5, 10, 16, 0.8) 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: inset 0 0 15px rgba(0, 240, 255, 0.15), 0 0 10px rgba(0, 0, 0, 0.5);
+}
+
+.compass-ticks {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, rgba(0, 240, 255, 0.4) 0deg 1deg, transparent 1deg 30deg);
+}
+
+.compass-needle {
+  position: absolute;
+  width: 4px;
+  height: 80px;
+  background: linear-gradient(to bottom, #ff3344 50%, #00f0ff 50%);
+  border-radius: 2px;
+  transform-origin: center center;
+  transition: transform 0.15s ease-out;
+  box-shadow: 0 0 8px rgba(255, 51, 68, 0.6);
+}
+
+.compass-center-cap {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #111a24;
+  border: 2px solid #00f0ff;
+  z-index: 2;
+}
+
+.compass-readout {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.heading-num-huge {
+  font-family: var(--font-mono);
+  font-size: 26px;
+  font-weight: 800;
+  color: #00ff88;
+  letter-spacing: 1px;
+}
+
+.heading-num-huge span {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+/* Motor Gauge Matrix */
+.motor-matrix-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.motor-channel-card {
+  background: rgba(14, 22, 34, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+.motor-channel-header {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.motor-pwm-bar-wrap {
+  position: relative;
+  height: 14px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: 4px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  margin-bottom: 6px;
+}
+
+.motor-pwm-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #00f0ff, #00ff88);
+  transition: width 0.1s linear;
+}
+
+.motor-pwm-fill.reverse {
+  background: linear-gradient(90deg, #ff9900, #ff3344);
+}
+
+.motor-metrics-sub {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+}
+
+/* Tactical Mini-Map Box */
+.tactical-map-deck {
+  position: relative;
+  background: #050a10;
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.tactical-map-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(10, 18, 28, 0.95);
+  border-bottom: 1px solid rgba(0, 240, 255, 0.15);
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
+.tactical-map-canvas-container {
+  position: relative;
+  width: 100%;
+  height: 380px;
+  background: #03060a;
+}
+
+#dashboard-map-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Battery & Link Security */
+.battery-cockpit-block {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+
+.battery-visual-icon {
+  width: 50px;
+  height: 24px;
+  border: 2px solid #00ff88;
+  border-radius: 4px;
+  padding: 2px;
+  position: relative;
+}
+
+.battery-visual-icon::after {
+  content: "";
+  position: absolute;
+  right: -5px;
+  top: 5px;
+  width: 3px;
+  height: 10px;
+  background: #00ff88;
+  border-radius: 0 2px 2px 0;
+}
+
+.battery-visual-bar {
+  height: 100%;
+  width: 100%;
+  background: #00ff88;
+  border-radius: 2px;
+  box-shadow: 0 0 8px rgba(0, 255, 136, 0.5);
+  transition: width 0.3s;
+}
+
+.sparkline-box {
+  width: 100%;
+  height: 36px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(0, 240, 255, 0.1);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+}
+
+.sparkline-canvas {
+  width: 100%;
+  height: 100%;
+}
+
+/* Console Terminal Capped */
+.telemetry-stream-console {
+  background: #03060a;
+  border: 1px solid rgba(0, 240, 255, 0.15);
+  border-radius: 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: #a4c2d6;
+  height: 220px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  line-height: 1.45;
+}
+
+.telemetry-stream-console::-webkit-scrollbar {
+  width: 6px;
+}
+
+.telemetry-stream-console::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.2);
+  border-radius: 3px;
+}
+
+.telemetry-stream-console .log-line-esp {
+  color: #00f0ff;
+}
+
+.telemetry-stream-console .log-line-warn {
+  color: #ffb800;
+}
+
+.telemetry-stream-console .log-line-fire {
+  color: #ff3344;
+  font-weight: 700;
+}
