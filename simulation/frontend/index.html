@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>BANTAY-SUNOG: Defense Telemetry Cockpit & 3D Digital Twin</title>
-  <link rel="stylesheet" href="css/dashboard.css?v=20">
+  <title>SAGIP-X: Defense Telemetry Dashboard & Digital Twin</title>
+  <link rel="stylesheet" href="css/dashboard.css?v=25">
   <!-- Three.js & Controls from trusted CDN -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
@@ -13,417 +13,599 @@
 </head>
 <body>
 
-  <!-- Fullscreen Three.js 3D Viewport: Robot renders right in the middle -->
-  <div id="canvas-container"></div>
-  <canvas id="pip-canvas" style="display:none;"></canvas>
+  <!-- ========================================================================
+       TOP GLOBAL HEADER & PRIMARY NAVIGATION
+       ======================================================================== -->
+  <header class="cockpit-top-bar" style="pointer-events: auto; z-index: 50;">
+    <div class="cockpit-brand-group">
+      <div class="cockpit-logo-badge">SAGIP-X<span>//</span>BANTAY-SUNOG</div>
+      
+      <!-- Primary Navigation Tabs -->
+      <nav class="cockpit-nav-tabs">
+        <button id="tab-nav-telemetry" class="cockpit-nav-tab active" data-tab="telemetry">
+          <span>📊</span> OPERATIONS TELEMETRY
+        </button>
+        <button id="tab-nav-simulation" class="cockpit-nav-tab" data-tab="simulation">
+          <span>🎮</span> 3D SIMULATION ARENA
+        </button>
+      </nav>
 
-  <!-- Complete Defense-Grade Telemetry Cockpit Viewport (Overlay) -->
-  <div class="defense-cockpit-viewport">
-
-    <!-- 1. TOP HEADER STATUS BAR -->
-    <header class="cockpit-top-bar cockpit-interactive">
-      <div class="cockpit-brand-group">
-        <div class="cockpit-logo-badge">DF<span>//</span>SAGIP</div>
-        <button id="btn-cockpit-menu" class="cockpit-menu-btn" title="Open Dual Console Terminals & Bench Controls">☰</button>
-        <div class="header-metric-block">
-          <span class="header-metric-label">MISSION</span>
-          <span class="header-metric-val">DF-UAS-01</span>
-        </div>
-        <div class="header-metric-block">
-          <span class="header-metric-label">UTC TIME</span>
-          <span id="cockpit-utc-time" class="header-metric-val">14:04:00</span>
-        </div>
+      <div class="header-metric-block">
+        <span class="header-metric-label">MISSION</span>
+        <span class="header-metric-val">DF-SAGIP-01</span>
       </div>
-
-      <div class="cockpit-header-items">
-        <div class="waveform-pill-box">
-          <span class="status-pill-outline pill-green-outline" style="border:none; padding:0; background:transparent;">▶ AES-256 ACTIVE</span>
-          <canvas id="secure-waveform-canvas" class="waveform-canvas" width="90" height="24"></canvas>
-        </div>
-
-        <div class="header-metric-block">
-          <span class="header-metric-label">AUTOPILOT</span>
-          <span id="cockpit-autopilot-pill" class="status-pill-outline pill-green-outline">SYSTEM NOMINAL</span>
-        </div>
-
-        <div class="header-metric-block">
-          <span class="header-metric-label">SAT LINK</span>
-          <span id="cockpit-satlink-pill" class="status-pill-outline pill-green-outline">STRONG</span>
-        </div>
-
-        <div class="header-metric-block">
-          <span class="header-metric-label">UPLINK</span>
-          <span id="cockpit-uplink-val" class="header-metric-val">2.3 Gbps</span>
-        </div>
+      <div class="header-metric-block">
+        <span class="header-metric-label">UTC TIME</span>
+        <span id="cockpit-utc-time" class="header-metric-val">14:04:00</span>
       </div>
-
-      <div class="cockpit-header-actions">
-        <button id="btn-download-logs" class="btn-hud btn-hud-primary" title="Export session logs as JSON"><span class="btn-icon">💾</span> EXPORT LOGS</button>
-        <button id="btn-toggle-cam-modal" class="icon-tool-btn" title="Toggle Live Optical Camera Window">📷</button>
-        <button id="btn-toggle-term-modal" class="icon-tool-btn" title="Toggle Pi & ESP32 UART Terminals">💻</button>
-        <button id="btn-toggle-bench-modal" class="icon-tool-btn" title="Hardware Direct Bench Test">🛠️</button>
-        <button id="btn-global-estop" class="btn-hud btn-hud-danger" style="font-weight: bold; letter-spacing: 1px;">🛑 E-STOP</button>
-      </div>
-    </header>
-
-    <!-- 2. CENTER TOP MODE SWITCHER -->
-    <div class="cockpit-center-mode-bar cockpit-interactive">
-      <div class="center-callsign-tag">
-        <span class="callsign-main">DF-OPS-241</span>
-        <span class="callsign-sub">RESCUE BOT PLATFORM</span>
-      </div>
-      <div class="mode-switcher-group">
-        <button id="btn-mode-3d" class="mode-switch-btn active" data-mode="3d">🎲 3D VIEW</button>
-        <button id="btn-mode-system" class="mode-switch-btn" data-mode="system">👁️ SYSTEM</button>
-        <button id="btn-mode-schematic" class="mode-switch-btn" data-mode="schematic">🗺️ SCHEMATIC</button>
+      <div class="header-metric-block">
+        <span class="header-metric-label">UPTIME</span>
+        <span id="cockpit-uptime" class="header-metric-val">00:00:00</span>
       </div>
     </div>
 
-    <!-- 3. MAIN WORKBENCH (Left & Right columns framing the 3D robot in the middle) -->
-    <main class="cockpit-main-layout">
-      <!-- LEFT COLUMN -->
-      <div class="cockpit-left-col">
-        <!-- Airframe System Status Card -->
-        <div class="glass-panel cockpit-interactive">
-          <div class="card-sec-title">AIRFRAME SYSTEM STATUS</div>
-          <div class="card-sec-sub">REAL-TIME DIAGNOSTICS & HEALTH MONITORING</div>
-
-          <div class="readiness-meter-wrap">
-            <div class="readiness-header-row">
-              <span>SYSTEM READINESS</span>
-              <span id="hud-readiness-score" class="readiness-score-val">85%</span>
-            </div>
-            <div class="segmented-bar-deck" id="segmented-readiness-meter">
-              <div class="bar-deck-seg lit-green"></div>
-              <div class="bar-deck-seg lit-green"></div>
-              <div class="bar-deck-seg lit-green"></div>
-              <div class="bar-deck-seg lit-green"></div>
-              <div class="bar-deck-seg lit-green"></div>
-              <div class="bar-deck-seg lit-green"></div>
-              <div class="bar-deck-seg lit-green"></div>
-              <div class="bar-deck-seg lit-green"></div>
-              <div class="bar-deck-seg"></div>
-              <div class="bar-deck-seg"></div>
-            </div>
-          </div>
-
-          <div class="status-checklist">
-            <div class="checklist-row">
-              <span class="checklist-label"><span class="status-dot-sm"></span> AIRFRAME INTEGRITY</span>
-              <span id="chk-airframe-status" class="checklist-badge txt-nominal">NOMINAL</span>
-            </div>
-            <div class="checklist-row">
-              <span class="checklist-label"><span id="chk-env-dot" class="status-dot-sm dot-warn"></span> ENVIRONMENT SENSORS</span>
-              <span id="chk-env-status" class="checklist-badge txt-warn">WARN</span>
-            </div>
-            <div class="checklist-row">
-              <span class="checklist-label"><span id="chk-sensors-dot" class="status-dot-sm dot-warn"></span> PITOT / HC-SR04 HEADER</span>
-              <span id="chk-sensors-status" class="checklist-badge txt-warn">WARN</span>
-            </div>
-            <div class="checklist-row">
-              <span class="checklist-label"><span id="chk-imu-dot" class="status-dot-sm"></span> MPU-6050 6-AXIS IMU</span>
-              <span id="dash-imu-status" class="checklist-badge txt-nominal">ONLINE</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Payload Status Card -->
-        <div class="glass-panel cockpit-interactive">
-          <div style="display: flex; justify-content: space-between; align-items: baseline;">
-            <div class="card-sec-title">📷 PAYLOAD STATUS</div>
-            <span id="payload-overall-pct" class="readiness-score-val" style="color: #00ff88; font-size: 15px;">65 %</span>
-          </div>
-          <div class="card-sec-sub">SUBSYSTEM SENSOR ACTIVITY</div>
-
-          <div class="payload-bars-container">
-            <div class="payload-bar-item">
-              <div class="payload-bar-track">
-                <div id="payload-bar-eo" class="payload-bar-fill" style="height: 82%;"></div>
-                <span id="payload-pct-eo" class="payload-bar-pct">82%</span>
-              </div>
-              <span class="payload-bar-tag">EO/IR</span>
-            </div>
-            <div class="payload-bar-item">
-              <div class="payload-bar-track">
-                <div id="payload-bar-lidar" class="payload-bar-fill" style="height: 64%;"></div>
-                <span id="payload-pct-lidar" class="payload-bar-pct">64%</span>
-              </div>
-              <span class="payload-bar-tag">LIDAR</span>
-            </div>
-            <div class="payload-bar-item">
-              <div class="payload-bar-track">
-                <div id="payload-bar-comms" class="payload-bar-fill" style="height: 42%;"></div>
-                <span id="payload-pct-comms" class="payload-bar-pct">42%</span>
-              </div>
-              <span class="payload-bar-tag">COMMS</span>
-            </div>
-          </div>
-        </div>
+    <div class="cockpit-header-items">
+      <div class="waveform-pill-box">
+        <span class="status-pill-outline pill-green-outline" style="border:none; padding:0; background:transparent;">▶ AES-256 ACTIVE</span>
+        <canvas id="secure-waveform-canvas" class="waveform-canvas" width="85" height="22"></canvas>
       </div>
 
-      <!-- CENTER STAGE IS OPEN: Three.js 3D Viewport renders the Robot in the middle -->
-
-      <!-- RIGHT COLUMN -->
-      <div class="cockpit-right-col">
-        <!-- Telemetry Bandwidth Card -->
-        <div class="glass-panel cockpit-interactive">
-          <div class="card-sec-title">📊 TELEMETRY BANDWIDTH</div>
-          <div class="card-sec-sub">REAL-TIME DATA STREAM (DOWNLINK / UPLINK)</div>
-          <div class="bandwidth-graph-box">
-            <canvas id="bandwidth-canvas" class="bandwidth-canvas" width="304" height="75"></canvas>
-          </div>
-          <div class="bandwidth-stats-row">
-            <span>DOWNLINK: <b id="bw-downlink-val">3.1 Gbps</b></span>
-            <span>UPLINK: <b id="bw-uplink-val">1.1 Gbps</b></span>
-          </div>
-        </div>
-
-        <!-- Link Security Card -->
-        <div class="glass-panel cockpit-interactive">
-          <div class="card-sec-title">🛡️ LINK SECURITY</div>
-          <div class="link-security-grid">
-            <div class="link-security-tile">
-              <span class="security-tile-label">ENCRYPTION</span>
-              <span class="security-tile-val">AES-256</span>
-            </div>
-            <div class="link-security-tile">
-              <span class="security-tile-label">LINK STRENGTH</span>
-              <span id="sec-strength-val" class="security-tile-val val-green">STRONG</span>
-            </div>
-            <div class="link-security-tile">
-              <span class="security-tile-label">LATENCY</span>
-              <span id="sec-latency-val" class="security-tile-val">28ms</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Flight / Operational Environment Card -->
-        <div class="glass-panel cockpit-interactive">
-          <div class="card-sec-title">✈️ FLIGHT ENVIRONMENT</div>
-          <div class="card-sec-sub">ATMOSPHERIC & COMPASS HEADING TELEMETRY</div>
-          <div class="env-metrics-split">
-            <div class="env-specs-list">
-              <div class="env-spec-row">
-                <span class="env-spec-label">RETRIEVAL RIG:</span>
-                <span class="status-pill-outline pill-green-outline" style="padding: 2px 6px; font-size: 9px;">▶ ON STATION</span>
-              </div>
-              <div class="env-spec-row">
-                <span class="env-spec-label">WIND SPEED:</span>
-                <span id="env-wind-val" class="env-spec-val">1.4 kt</span>
-              </div>
-              <div class="env-spec-row">
-                <span class="env-spec-label">GUST:</span>
-                <span id="env-gust-val" class="env-spec-val">2.1 kt</span>
-              </div>
-              <div class="env-spec-row">
-                <span class="env-spec-label">AIR DENSITY:</span>
-                <span id="env-density-val" class="env-spec-val">1.02 kg/m³</span>
-              </div>
-            </div>
-
-            <!-- Circular Compass Rose Dial -->
-            <div class="env-compass-wrap" title="Live MPU-6050 Heading Compass">
-              <div class="env-compass-ticks"></div>
-              <div id="dash-compass-needle" class="env-compass-needle"></div>
-              <div class="env-compass-center"></div>
-            </div>
-          </div>
-          <div style="display: flex; justify-content: flex-end; align-items: baseline; gap: 6px; margin-top: 4px;">
-            <span style="font-size: 10px; color: #8b949e; font-family: var(--font-mono, monospace);">HEADING:</span>
-            <span id="dash-compass-heading" style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 14px; color: #00ff88;">000</span>°
-            <span id="dash-compass-cardinal" style="font-size: 10px; font-weight: 700; color: #ea580c; font-family: var(--font-mono, monospace);">[N]</span>
-          </div>
-        </div>
-      </div>
-    </main>
-
-    <!-- 4. BOTTOM FLOATING DOCK -->
-    <footer class="cockpit-bottom-dock">
-      <!-- Battery Module Card -->
-      <div class="glass-panel cockpit-interactive battery-module-card">
-        <div>
-          <div id="dash-battery-pct" class="battery-level-huge">84.2 %</div>
-          <div class="card-sec-sub" style="margin-bottom: 6px;">BATTERY LEVEL</div>
-          <div class="battery-metrics-grid">
-            <div>CURRENT: <b id="dash-battery-amp">18.7 A</b></div>
-            <div>VOLTAGE: <b id="dash-battery-volt">22.8 V</b></div>
-            <div>CYCLES: <b>212</b></div>
-            <div>TEMP: <b id="dash-battery-temp">34.2 °C</b></div>
-          </div>
-        </div>
-
-        <!-- Isometric Battery Graphic -->
-        <div class="battery-iso-view">
-          <div class="iso-cell-stack">
-            <div class="iso-cell-layer"></div>
-            <div class="iso-cell-layer"></div>
-            <div class="iso-cell-layer"></div>
-            <div class="iso-cell-layer"></div>
-          </div>
-          <div style="position: absolute; bottom: 2px; font-size: 8px; font-family: var(--font-mono, monospace); color: #6e7681; letter-spacing: 1px;">DF-BT-01 // BATTERY</div>
-        </div>
-
-        <!-- Endurance & Power Stats -->
-        <div class="battery-endurance-sub">
-          <div>REMAINING ENDURANCE: <span id="battery-endurance-val" class="endurance-time-huge">2h 50m</span></div>
-          <canvas id="battery-sparkline-canvas" width="120" height="20" style="display:block; margin: 2px 0;"></canvas>
-          <div style="display: flex; justify-content: space-between;"><span>ENERGY REMAINING:</span> <b style="color:#e6edf3;">3.42 kWh</b></div>
-          <div style="display: flex; justify-content: space-between;"><span>POWER DRAW:</span> <b style="color:#e6edf3;">1.23 kW</b></div>
-          <div style="display: flex; justify-content: space-between;"><span>ETA (RETURN):</span> <b style="color:#e6edf3;">00:12:38</b></div>
-          <div style="display: flex; justify-content: space-between;"><span>BATTERY STATUS:</span> <b style="color:#00ff88;">NOMINAL</b></div>
-        </div>
+      <div class="header-metric-block">
+        <span class="header-metric-label">FSM STATE</span>
+        <span id="cockpit-autopilot-pill" class="status-pill-outline pill-green-outline">SEARCHING</span>
       </div>
 
-      <!-- Electric Motor Overview Card -->
-      <div class="glass-panel cockpit-interactive motor-overview-card">
-        <div>
-          <div class="card-sec-title">⚙️ MOTOR OVERVIEW</div>
-          <div class="card-sec-sub">TB6612 DUAL DRIVE</div>
-        </div>
-        <div class="motor-twin-wheels">
-          <div class="wheel-drive-disc" title="Left Motor Drive"><div class="wheel-drive-center"></div></div>
-          <div class="wheel-drive-disc" title="Right Motor Drive"><div class="wheel-drive-center"></div></div>
-        </div>
-        <div>
-          <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 11px;">
-            <span style="color:#8b949e;">RPM:</span> <b id="dash-motor-rpm" style="color:#00ff88;">3,556</b>
-          </div>
-          <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 11px;">
-            <span style="color:#8b949e;">POWER:</span> <b id="dash-motor-pwr" style="color:#e6edf3;">19.1 kW</b>
-          </div>
-          <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 10px; margin-top:2px;">
-            <span style="color:#6e7681;">PWM:</span> <b id="hud-pwm-txt" style="color:var(--accent-cyan);">L:0 | R:0</b>
-          </div>
-        </div>
+      <div class="header-metric-block">
+        <span class="header-metric-label">HARDWARE</span>
+        <span id="cockpit-hw-status" class="status-pill-outline pill-green-outline">LINKED</span>
       </div>
 
-      <!-- Engine Status / Spectrum Histogram Card -->
-      <div class="glass-panel cockpit-interactive engine-status-card">
-        <div class="engine-header-row">
-          <div style="display: flex; align-items: center; gap: 8px;">
-            <span class="card-sec-title">ENGINE STATUS</span>
-            <span class="status-pill-outline pill-green-outline" style="padding: 2px 6px; font-size: 9px;">NOMINAL</span>
-          </div>
-          <div style="font-family: var(--font-mono, monospace); font-size: 11px; color:#8b949e;">
-            EFFICIENCY <b id="engine-efficiency-val" style="color:#e6edf3; font-size: 14px; margin-left:4px;">93 %</b>
-          </div>
-        </div>
-
-        <div class="spectrum-histogram-deck" id="spectrum-deck">
-          <!-- 24 spectrum histogram bars generated dynamically -->
-          <div class="spectrum-bar" style="height: 35%;"></div>
-          <div class="spectrum-bar" style="height: 45%;"></div>
-          <div class="spectrum-bar" style="height: 60%;"></div>
-          <div class="spectrum-bar warm-yellow" style="height: 75%;"></div>
-          <div class="spectrum-bar hot-red" style="height: 90%;"></div>
-          <div class="spectrum-bar hot-red" style="height: 85%;"></div>
-          <div class="spectrum-bar warm-yellow" style="height: 70%;"></div>
-          <div class="spectrum-bar" style="height: 55%;"></div>
-          <div class="spectrum-bar" style="height: 40%;"></div>
-          <div class="spectrum-bar" style="height: 30%;"></div>
-          <div class="spectrum-bar" style="height: 48%;"></div>
-          <div class="spectrum-bar warm-yellow" style="height: 68%;"></div>
-          <div class="spectrum-bar hot-red" style="height: 92%;"></div>
-          <div class="spectrum-bar hot-red" style="height: 88%;"></div>
-          <div class="spectrum-bar warm-yellow" style="height: 72%;"></div>
-          <div class="spectrum-bar" style="height: 50%;"></div>
-          <div class="spectrum-bar" style="height: 38%;"></div>
-          <div class="spectrum-bar" style="height: 32%;"></div>
-          <div class="spectrum-bar" style="height: 44%;"></div>
-          <div class="spectrum-bar" style="height: 58%;"></div>
-          <div class="spectrum-bar warm-yellow" style="height: 70%;"></div>
-          <div class="spectrum-bar hot-red" style="height: 84%;"></div>
-          <div class="spectrum-bar" style="height: 52%;"></div>
-          <div class="spectrum-bar" style="height: 36%;"></div>
-        </div>
+      <div class="header-metric-block">
+        <span class="header-metric-label">PORT</span>
+        <span id="cockpit-port-val" class="header-metric-val" style="font-size: 11px;">192.168.137.200:8888</span>
       </div>
-    </footer>
+    </div>
+
+    <div class="cockpit-header-actions">
+      <button id="btn-download-logs" class="btn-hud btn-hud-primary" title="Export session telemetry logs as JSON">
+        <span class="btn-icon">💾</span> EXPORT LOGS
+      </button>
+      <button id="btn-toggle-slam-modal" class="icon-tool-btn" title="Toggle Tactical SLAM Occupancy Grid">🗺️</button>
+      <button id="btn-toggle-cam-modal" class="icon-tool-btn" title="Toggle Live Optical Camera Window">👁️</button>
+      <button id="btn-toggle-term-modal" class="icon-tool-btn" title="Toggle Pi & ESP32 UART Terminals">💻</button>
+      <button id="btn-toggle-bench-modal" class="icon-tool-btn" title="Hardware Direct Bench Test">🛠️</button>
+      <button id="btn-global-estop" class="btn-hud btn-hud-danger" style="font-weight: bold; letter-spacing: 1px;">🛑 E-STOP</button>
+    </div>
+  </header>
+
+  <!-- ========================================================================
+       TAB CONTAINER
+       ======================================================================== -->
+  <div class="tab-view-container">
 
     <!-- ----------------------------------------------------------------------
-         MODALS / OVERLAY DRAWERS
+         TAB 1: OPERATIONS TELEMETRY (MAIN DASHBOARD + STATIC 3D ROBOT INSPECTOR)
          ---------------------------------------------------------------------- -->
+    <section id="view-telemetry-cockpit" class="tab-view active">
+      <div class="defense-cockpit-viewport">
 
-    <!-- SCHEMATIC / TACTICAL SLAM MODAL (Activated via center [SCHEMATIC] button) -->
-    <div id="modal-schematic-slam" class="cockpit-modal-overlay cockpit-interactive" style="display: none;">
-      <div class="modal-header-toolbar">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 13px; color: #00f0ff; letter-spacing: 1px;">🗺️ TACTICAL SLAM OCCUPANCY GRID (SCHEMATIC)</span>
-          <span id="dash-map-pose" class="status-pill-outline pill-green-outline" style="padding: 2px 8px; font-size: 10px;">X:0.0 Z:0.0 Y:0°</span>
-        </div>
-        <div style="display: flex; gap: 8px;">
-          <button id="btn-reset-map" class="btn-hud" style="padding: 4px 10px;">↺ Reset SLAM</button>
-          <button id="btn-close-schematic" class="btn-hud btn-hud-danger" style="padding: 4px 10px;">✕ Close</button>
-        </div>
-      </div>
-      <div class="modal-content-stage" style="background: #03060a; display: flex; align-items: center; justify-content: center;">
-        <canvas id="dashboard-map-canvas" width="640" height="420" style="display: block; width: 100%; height: 100%; object-fit: contain;"></canvas>
-      </div>
-    </div>
+        <!-- A. CENTER STAGE: STATIC 3D SAGIP-X ROBOT INSPECTOR -->
+        <div class="static-robot-viewport">
+          <!-- Floating Inspector Toolbar with Rich Options -->
+          <div class="inspector-control-deck">
+            <div class="inspector-group">
+              <span style="font-family: var(--font-mono, monospace); font-size: 9px; color: #6e7681; margin-right: 4px;">RENDER:</span>
+              <button id="btn-render-solid" class="inspector-btn active" title="Realistic Full Color 3D Mesh">🔷 SOLID</button>
+              <button id="btn-render-hologram" class="inspector-btn hologram-btn" title="Tactical Glowing X-Ray Wireframe">🌐 X-RAY HOLOGRAM</button>
+              <button id="btn-render-labels" class="inspector-btn" title="Toggle 3D Floating Sensor Component Badges">🏷️ 3D LABELS</button>
+            </div>
 
-    <!-- SYSTEM / VISION AI MODAL (Activated via center [SYSTEM] button) -->
-    <div id="modal-system-vision" class="cockpit-modal-overlay cockpit-interactive" style="display: none;">
-      <div class="modal-header-toolbar">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 13px; color: #00ff88; letter-spacing: 1px;">👁️ VISION AI OPTICAL TARGET LOCK (SYSTEM FEED)</span>
-          <span class="status-pill-outline pill-green-outline" style="padding: 2px 8px; font-size: 10px;">YOLOv8n ACTIVE</span>
-        </div>
-        <button id="btn-close-vision" class="btn-hud btn-hud-danger" style="padding: 4px 10px;">✕ Close</button>
-      </div>
-      <div class="modal-content-stage" style="background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
-        <img id="dashboard-cam-mjpeg" class="dash-camera-stream-img" src="/video_feed" alt="Webcam Stream" crossorigin="anonymous" style="width: 100%; height: 100%; object-fit: contain;" />
-        <canvas id="dashboard-cam-canvas" width="640" height="360" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
-      </div>
-    </div>
+            <div style="width: 1px; height: 16px; background: rgba(255, 255, 255, 0.15);"></div>
 
-    <!-- DUAL ENGINEERING CONSOLE MODAL (Activated via top menu ☰ or 💻) -->
-    <div id="modal-engineering-console" class="cockpit-modal-overlay cockpit-interactive" style="display: none; top: 60px; left: 160px; right: 160px; bottom: 80px;">
-      <div class="modal-header-toolbar">
-        <span style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 13px; color: #fff;">⚡ RASPBERRY PI 3B & ESP32-WROOM DUAL TERMINAL STREAM</span>
-        <button id="btn-close-console" class="btn-hud btn-hud-danger" style="padding: 4px 10px;">✕ Close</button>
-      </div>
-      <div class="modal-content-stage" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; box-sizing: border-box; background: #070b12;">
-        <div style="display: flex; flex-direction: column;">
-          <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-family: var(--font-mono, monospace); font-size: 11px;">
-            <span style="color: #ff3344;">🍓 Raspberry Pi 3B (Wi-Fi)</span>
-            <button id="btn-clear-pi" class="btn-hud" style="padding: 2px 6px; font-size: 10px;">Clear</button>
+            <div class="inspector-group">
+              <span style="font-family: var(--font-mono, monospace); font-size: 9px; color: #6e7681; margin-right: 4px;">VIEW:</span>
+              <button class="inspector-btn view-preset-btn active" data-cam="iso" title="Isometric Perspective">📐 ISO</button>
+              <button class="inspector-btn view-preset-btn" data-cam="front" title="Front Sensor Array View">🎯 FRONT</button>
+              <button class="inspector-btn view-preset-btn" data-cam="top" title="Top-Down Deck View">🔝 TOP</button>
+              <button class="inspector-btn view-preset-btn" data-cam="turret" title="Turret Gimbal Close-Up">🔭 TURRET</button>
+            </div>
+
+            <div style="width: 1px; height: 16px; background: rgba(255, 255, 255, 0.15);"></div>
+
+            <div class="inspector-group">
+              <select id="select-sensor-hotspot" class="inspector-select" title="Spotlight specific sensor component on the 3D robot">
+                <option value="">🎯 SPOTLIGHT SENSOR...</option>
+                <option value="front_sonar">1. Front HC-SR04 (0° Obstacle & Standoff)</option>
+                <option value="left_sonar">2. Left HC-SR04 (+45° Flank Clearance)</option>
+                <option value="right_sonar">3. Right HC-SR04 (-45° Flank Clearance)</option>
+                <option value="imu">4. MPU-6050 6-Axis IMU (Center of Mass)</option>
+                <option value="flame_ir">5. LM393 Optical IR Flame Sensor (Turret)</option>
+                <option value="camera">6. Vision AI Optical Camera (Gimbal)</option>
+                <option value="turret">7. MG90S Pitch Tilt Servo (45°-135°)</option>
+                <option value="solenoid">8. Extinguisher Canister & MG996R</option>
+                <option value="motors">9. TB6612FNG Dual H-Bridge & 4WD</option>
+                <option value="compute">10. Raspberry Pi 3B & ESP32 Dual Core</option>
+              </select>
+            </div>
           </div>
-          <div id="terminal-pi" class="telemetry-stream-console" style="flex: 1; height: auto;"></div>
+
+          <!-- Static Robot Three.js Canvas -->
+          <canvas id="dashboard-robot-canvas"></canvas>
         </div>
-        <div style="display: flex; flex-direction: column;">
-          <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-family: var(--font-mono, monospace); font-size: 11px;">
-            <span style="color: #00f0ff;">⚡ ESP32-WROOM FreeRTOS</span>
-            <button id="btn-clear-esp" class="btn-hud" style="padding: 2px 6px; font-size: 10px;">Clear</button>
+
+        <!-- B. LEFT COLUMN: REAL HARDWARE HEALTH & TRI-SONIC PERCEPTION -->
+        <main class="cockpit-main-layout">
+          <div class="cockpit-left-col">
+
+            <!-- Card 1: Subsystem Health & Diagnostics -->
+            <div class="glass-panel cockpit-interactive" id="card-subsystem-health">
+              <div class="card-sec-title">ROBOT SUBSYSTEM HEALTH</div>
+              <div class="card-sec-sub">SAGIP-X DIAGNOSTICS & HARDWARE INTERLOCK</div>
+
+              <div class="readiness-meter-wrap">
+                <div class="readiness-header-row">
+                  <span>SYSTEM READINESS</span>
+                  <span id="hud-readiness-score" class="readiness-score-val">95%</span>
+                </div>
+                <div class="segmented-bar-deck" id="segmented-readiness-meter">
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg lit-green"></div>
+                  <div class="bar-deck-seg"></div>
+                </div>
+              </div>
+
+              <div class="status-checklist">
+                <div class="checklist-row" id="item-chk-imu">
+                  <span class="checklist-label"><span id="chk-imu-dot" class="status-dot-sm"></span> MPU-6050 6-AXIS IMU (I2C 0x68)</span>
+                  <span id="chk-imu-status" class="checklist-badge txt-nominal">ONLINE</span>
+                </div>
+                <div class="checklist-row" id="item-chk-sonar">
+                  <span class="checklist-label"><span id="chk-sonar-dot" class="status-dot-sm"></span> HC-SR04 TRI-SONIC ARRAY (3x)</span>
+                  <span id="chk-sonar-status" class="checklist-badge txt-nominal">ACTIVE PING</span>
+                </div>
+                <div class="checklist-row" id="item-chk-flame">
+                  <span class="checklist-label"><span id="chk-flame-dot" class="status-dot-sm"></span> LM393 OPTICAL IR FLAME SENSOR</span>
+                  <span id="chk-flame-status" class="checklist-badge txt-nominal">ARMED</span>
+                </div>
+                <div class="checklist-row" id="item-chk-motor">
+                  <span class="checklist-label"><span id="chk-motor-dot" class="status-dot-sm"></span> TB6612FNG MOTOR DRIVER</span>
+                  <span id="chk-motor-status" class="checklist-badge txt-nominal">STBY HIGH</span>
+                </div>
+                <div class="checklist-row" id="item-chk-turret">
+                  <span class="checklist-label"><span id="chk-turret-dot" class="status-dot-sm"></span> MG90S TILT GIMBAL (50Hz)</span>
+                  <span id="chk-turret-status" class="checklist-badge txt-nominal">90° LEVEL</span>
+                </div>
+                <div class="checklist-row" id="item-chk-extinguisher">
+                  <span class="checklist-label"><span id="chk-extinguisher-dot" class="status-dot-sm"></span> MG996R SUPPRESSION ACTUATOR</span>
+                  <span id="chk-extinguisher-status" class="checklist-badge txt-nominal">STANDBY</span>
+                </div>
+                <div class="checklist-row" id="item-chk-pi">
+                  <span class="checklist-label"><span id="chk-pi-dot" class="status-dot-sm"></span> RASPBERRY PI 3B VISION LINK</span>
+                  <span id="chk-pi-status" class="checklist-badge txt-nominal">CONNECTED</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Card 2: HC-SR04 Tri-Sonic Perception Gauges -->
+            <div class="glass-panel cockpit-interactive" id="card-sonar-perception">
+              <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                <div class="card-sec-title">📡 HC-SR04 TRI-SONIC PERCEPTION</div>
+                <span class="readiness-score-val" style="color: #00ff88; font-size: 13px;">RANGE: 0 - 300 cm</span>
+              </div>
+              <div class="card-sec-sub">ULTRASONIC ECHO DELAYS & SPRAY STANDOFF</div>
+
+              <div class="sonar-gauges-container">
+                <!-- Front Sensor -->
+                <div class="sonar-gauge-row" id="row-sonar-front">
+                  <div class="sonar-gauge-header">
+                    <span style="color: #00f0ff; font-weight: 700;">FRONT (0°) - OBSTACLE & SPRAY STANDOFF</span>
+                    <span><b id="sonar-val-cm-front" style="color: #00ff88; font-size: 13px;">125.4</b> cm (<span id="sonar-val-in-front">49.4</span> in)</span>
+                  </div>
+                  <div class="sonar-gauge-track">
+                    <div class="sonar-standoff-line" title="30cm Fire Suppression Target Standoff"></div>
+                    <div id="sonar-gauge-front" class="sonar-gauge-fill" style="width: 42%;"></div>
+                  </div>
+                </div>
+
+                <!-- Left Sensor -->
+                <div class="sonar-gauge-row" id="row-sonar-left">
+                  <div class="sonar-gauge-header">
+                    <span style="color: #e6edf3; font-weight: 700;">LEFT (+45°) - FLANK CLEARANCE</span>
+                    <span><b id="sonar-val-cm-left" style="color: #00ff88; font-size: 13px;">80.2</b> cm (<span id="sonar-val-in-left">31.6</span> in)</span>
+                  </div>
+                  <div class="sonar-gauge-track">
+                    <div id="sonar-gauge-left" class="sonar-gauge-fill" style="width: 27%;"></div>
+                  </div>
+                </div>
+
+                <!-- Right Sensor -->
+                <div class="sonar-gauge-row" id="row-sonar-right">
+                  <div class="sonar-gauge-header">
+                    <span style="color: #e6edf3; font-weight: 700;">RIGHT (-45°) - FLANK CLEARANCE</span>
+                    <span><b id="sonar-val-cm-right" style="color: #00ff88; font-size: 13px;">210.0</b> cm (<span id="sonar-val-in-right">82.7</span> in)</span>
+                  </div>
+                  <div class="sonar-gauge-track">
+                    <div id="sonar-gauge-right" class="sonar-gauge-fill" style="width: 70%;"></div>
+                  </div>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: space-between; margin-top: 8px; font-family: var(--font-mono, monospace); font-size: 10px; color: #8b949e;">
+                <span>RED &lt;30cm (DANGER)</span>
+                <span>YELLOW 30-60cm</span>
+                <span>GREEN &gt;60cm (CLEAR)</span>
+              </div>
+            </div>
+
           </div>
-          <div id="terminal-esp32" class="telemetry-stream-console" style="flex: 1; height: auto;"></div>
+
+          <!-- C. RIGHT COLUMN: MPU-6050 6-AXIS IMU & COMPUTE TELEMETRY -->
+          <div class="cockpit-right-col">
+
+            <!-- Card 3: MPU-6050 6-Axis Inertial Telemetry -->
+            <div class="glass-panel cockpit-interactive" id="card-imu-telemetry">
+              <div class="card-sec-title">🧭 MPU-6050 6-AXIS INERTIAL TELEMETRY</div>
+              <div class="card-sec-sub">ACCELEROMETER, GYROSCOPE & COMPASS HEADING</div>
+
+              <!-- Linear Acceleration Grid -->
+              <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: #8b949e; margin-top: 4px;">LINEAR ACCELERATION (±2g):</div>
+              <div class="imu-matrix-grid">
+                <div class="imu-axis-card">
+                  <span class="imu-axis-title">AX (X-AXIS)</span>
+                  <span id="imu-val-ax" class="imu-axis-val">+0.01 g</span>
+                </div>
+                <div class="imu-axis-card">
+                  <span class="imu-axis-title">AY (Y-AXIS)</span>
+                  <span id="imu-val-ay" class="imu-axis-val">-0.02 g</span>
+                </div>
+                <div class="imu-axis-card">
+                  <span class="imu-axis-title">AZ (GRAVITY)</span>
+                  <span id="imu-val-az" class="imu-axis-val">+0.98 g</span>
+                </div>
+              </div>
+
+              <!-- Angular Velocity Grid -->
+              <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: #8b949e; margin-top: 4px;">ANGULAR VELOCITY (±500°/s):</div>
+              <div class="imu-matrix-grid">
+                <div class="imu-axis-card">
+                  <span class="imu-axis-title">GX (ROLL RATE)</span>
+                  <span id="imu-val-gx" class="imu-axis-val" style="color: #00ff88;">+0.1 °/s</span>
+                </div>
+                <div class="imu-axis-card">
+                  <span class="imu-axis-title">GY (PITCH RATE)</span>
+                  <span id="imu-val-gy" class="imu-axis-val" style="color: #00ff88;">-0.3 °/s</span>
+                </div>
+                <div class="imu-axis-card">
+                  <span class="imu-axis-title">GZ (YAW RATE)</span>
+                  <span id="imu-val-gz" class="imu-axis-val" style="color: #00ff88;">0.0 °/s</span>
+                </div>
+              </div>
+
+              <!-- Attitude & Tactical Compass Split -->
+              <div class="env-metrics-split" style="margin-top: 6px;">
+                <div class="env-specs-list">
+                  <div class="env-spec-row">
+                    <span class="env-spec-label">PITCH ANGLE:</span>
+                    <span id="imu-val-pitch" class="env-spec-val">-0.6°</span>
+                  </div>
+                  <div class="env-spec-row">
+                    <span class="env-spec-label">ROLL ANGLE:</span>
+                    <span id="imu-val-roll" class="env-spec-val">+1.2°</span>
+                  </div>
+                  <div class="env-spec-row">
+                    <span class="env-spec-label">DIE TEMP:</span>
+                    <span id="imu-val-temp" class="env-spec-val" style="color: #ffb800;">28.4 °C</span>
+                  </div>
+                  <div class="env-spec-row">
+                    <span class="env-spec-label">CALIBRATION:</span>
+                    <span id="imu-cal-val" class="status-pill-outline pill-green-outline" style="padding: 1px 6px; font-size: 9px;">ACTIVE</span>
+                  </div>
+                </div>
+
+                <!-- Circular Compass Rose Dial -->
+                <div class="env-compass-wrap" title="Live Integrated MPU-6050 Heading Compass">
+                  <div class="env-compass-ticks"></div>
+                  <div id="dash-compass-needle" class="env-compass-needle"></div>
+                  <div class="env-compass-center"></div>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; align-items: baseline; gap: 6px; margin-top: 2px;">
+                <span style="font-size: 10px; color: #8b949e; font-family: var(--font-mono, monospace);">YAW HEADING:</span>
+                <span id="dash-compass-heading" style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 14px; color: #00ff88;">045</span>°
+                <span id="dash-compass-cardinal" style="font-size: 10px; font-weight: 700; color: #ea580c; font-family: var(--font-mono, monospace);">[NE]</span>
+              </div>
+            </div>
+
+            <!-- Card 4: Communications & Compute Telemetry -->
+            <div class="glass-panel cockpit-interactive" id="card-compute-telemetry">
+              <div class="card-sec-title">💻 COMPUTE & TELEMETRY LINK</div>
+              <div class="card-sec-sub">WI-FI BRIDGE (TCP 8888) & PI 3B HARDWARE</div>
+
+              <div class="bandwidth-graph-box">
+                <canvas id="bandwidth-canvas" class="bandwidth-canvas" width="304" height="65"></canvas>
+              </div>
+
+              <div class="bandwidth-stats-row">
+                <span>PKT RATE: <b id="link-pkt-rate" style="color:#00ff88;">10.2 Hz</b></span>
+                <span>LATENCY: <b id="link-latency-val">12 ms</b></span>
+                <span>LOST: <b id="link-loss-val" style="color:#00ff88;">0%</b></span>
+              </div>
+
+              <div class="link-security-grid" style="margin-top: 6px;">
+                <div class="link-security-tile">
+                  <span class="security-tile-label">PI 3B CPU</span>
+                  <span id="pi-cpu-val" class="security-tile-val val-green">18.4%</span>
+                </div>
+                <div class="link-security-tile">
+                  <span class="security-tile-label">PI CORE TEMP</span>
+                  <span id="pi-temp-val" class="security-tile-val">48.2°C</span>
+                </div>
+                <div class="link-security-tile">
+                  <span class="security-tile-label">PI RAM USED</span>
+                  <span id="pi-ram-val" class="security-tile-val">210 MB</span>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </main>
+
+        <!-- D. BOTTOM FLOATING DOCK -->
+        <footer class="cockpit-bottom-dock">
+
+          <!-- Card 5: 3S LiPo Power Module -->
+          <div class="glass-panel cockpit-interactive battery-module-card">
+            <div>
+              <div style="display: flex; align-items: baseline; gap: 8px;">
+                <div id="dash-battery-pct" class="battery-level-huge">84.2 %</div>
+                <div id="dash-battery-volt" style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 16px; color: #00ff88;">11.8 V</div>
+              </div>
+              <div class="card-sec-sub" style="margin-bottom: 6px;">3S LiPo BATTERY PACK (2200 mAh)</div>
+
+              <div class="lipo-cells-deck">
+                <div class="lipo-cell-box">
+                  <span class="lipo-cell-label">CELL 1</span>
+                  <span id="cell-volt-1" class="lipo-cell-val">3.93 V</span>
+                  <div class="lipo-cell-bar"><div id="cell-bar-1" class="lipo-cell-fill" style="width: 84%;"></div></div>
+                </div>
+                <div class="lipo-cell-box">
+                  <span class="lipo-cell-label">CELL 2</span>
+                  <span id="cell-volt-2" class="lipo-cell-val">3.94 V</span>
+                  <div class="lipo-cell-bar"><div id="cell-bar-2" class="lipo-cell-fill" style="width: 85%;"></div></div>
+                </div>
+                <div class="lipo-cell-box">
+                  <span class="lipo-cell-label">CELL 3</span>
+                  <span id="cell-volt-3" class="lipo-cell-val">3.93 V</span>
+                  <div class="lipo-cell-bar"><div id="cell-bar-3" class="lipo-cell-fill" style="width: 84%;"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Isometric Battery Graphic -->
+            <div class="battery-iso-view">
+              <div class="iso-cell-stack">
+                <div class="iso-cell-layer"></div>
+                <div class="iso-cell-layer"></div>
+                <div class="iso-cell-layer"></div>
+              </div>
+              <div style="position: absolute; bottom: 2px; font-size: 8px; font-family: var(--font-mono, monospace); color: #6e7681; letter-spacing: 1px;">3S 11.1V // LiPo</div>
+            </div>
+
+            <!-- Endurance & Power Stats -->
+            <div class="battery-endurance-sub">
+              <div>EST. ENDURANCE: <span id="battery-endurance-val" class="endurance-time-huge">1h 48m</span></div>
+              <canvas id="battery-sparkline-canvas" width="120" height="18" style="display:block; margin: 2px 0;"></canvas>
+              <div style="display: flex; justify-content: space-between;"><span>LOAD CURRENT:</span> <b id="dash-battery-amp" style="color:#e6edf3;">1.25 A</b></div>
+              <div style="display: flex; justify-content: space-between;"><span>POWER DRAW:</span> <b id="dash-battery-watt" style="color:#e6edf3;">14.7 W</b></div>
+              <div style="display: flex; justify-content: space-between;"><span>BATTERY STATUS:</span> <b style="color:#00ff88;">NOMINAL</b></div>
+            </div>
+          </div>
+
+          <!-- Card 6: TB6612FNG Drive & Turret Actuators -->
+          <div class="glass-panel cockpit-interactive motor-overview-card">
+            <div>
+              <div class="card-sec-title">⚙️ ACTUATOR DRIVE MATRIX</div>
+              <div class="card-sec-sub">TB6612 4WD & MG90S/MG996R SERVOS</div>
+            </div>
+
+            <div class="motor-twin-wheels">
+              <div class="wheel-drive-disc" title="Left Motor Pair"><div class="wheel-drive-center"></div></div>
+              <div class="wheel-drive-disc" title="Right Motor Pair"><div class="wheel-drive-center"></div></div>
+            </div>
+
+            <div>
+              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 11px;">
+                <span style="color:#8b949e;">SPEED / RPM:</span> <b id="dash-motor-rpm" style="color:#00ff88;">140 RPM</b>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 11px;">
+                <span style="color:#8b949e;">TURRET TILT:</span> <b id="dash-turret-pitch" style="color:#00f0ff;">90° (LEVEL)</b>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 10px; margin-top:2px;">
+                <span style="color:#6e7681;">PWM (L/R):</span> <b id="hud-pwm-txt" style="color:var(--accent-cyan);">L:0 | R:0</b>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 10px;">
+                <span style="color:#6e7681;">EXTINGUISHER:</span> <b id="dash-extinguisher-status" style="color:#00ff88;">STANDBY (0°)</b>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 7: Fire Threat & Sensor Spectrum -->
+          <div class="glass-panel cockpit-interactive engine-status-card">
+            <div class="engine-header-row">
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <span class="card-sec-title">🔥 FIRE THREAT & SPECTRUM</span>
+                <span id="dash-fire-badge" class="status-pill-outline pill-green-outline" style="padding: 2px 6px; font-size: 9px;">CLEAR</span>
+              </div>
+              <div style="font-family: var(--font-mono, monospace); font-size: 10px; color:#8b949e;">
+                AI CONF: <b id="dash-fire-conf" style="color:#00ff88; font-size: 12px;">0%</b> | IR TRIP: <b id="dash-ir-trip" style="color:#8b949e;">NO</b>
+              </div>
+            </div>
+
+            <div class="spectrum-histogram-deck" id="spectrum-deck">
+              <!-- 24 spectrum histogram bars generated dynamically -->
+              <div class="spectrum-bar" style="height: 25%;"></div>
+              <div class="spectrum-bar" style="height: 35%;"></div>
+              <div class="spectrum-bar" style="height: 45%;"></div>
+              <div class="spectrum-bar warm-yellow" style="height: 60%;"></div>
+              <div class="spectrum-bar warm-yellow" style="height: 55%;"></div>
+              <div class="spectrum-bar" style="height: 40%;"></div>
+              <div class="spectrum-bar" style="height: 30%;"></div>
+              <div class="spectrum-bar" style="height: 25%;"></div>
+              <div class="spectrum-bar" style="height: 35%;"></div>
+              <div class="spectrum-bar" style="height: 50%;"></div>
+              <div class="spectrum-bar warm-yellow" style="height: 65%;"></div>
+              <div class="spectrum-bar hot-red" style="height: 80%;"></div>
+              <div class="spectrum-bar warm-yellow" style="height: 65%;"></div>
+              <div class="spectrum-bar" style="height: 45%;"></div>
+              <div class="spectrum-bar" style="height: 35%;"></div>
+              <div class="spectrum-bar" style="height: 30%;"></div>
+              <div class="spectrum-bar" style="height: 25%;"></div>
+              <div class="spectrum-bar" style="height: 40%;"></div>
+              <div class="spectrum-bar" style="height: 50%;"></div>
+              <div class="spectrum-bar warm-yellow" style="height: 60%;"></div>
+              <div class="spectrum-bar" style="height: 45%;"></div>
+              <div class="spectrum-bar" style="height: 35%;"></div>
+              <div class="spectrum-bar" style="height: 25%;"></div>
+              <div class="spectrum-bar" style="height: 20%;"></div>
+            </div>
+          </div>
+
+        </footer>
+
+      </div>
+    </section>
+
+    <!-- ----------------------------------------------------------------------
+         TAB 2: 3D SIMULATION ARENA (INTERACTIVE ARENA WITH MOVABLE ROBOT)
+         ---------------------------------------------------------------------- -->
+    <section id="view-simulation-arena" class="tab-view">
+      <!-- Fullscreen Three.js Physics Scene -->
+      <div id="canvas-container"></div>
+      <canvas id="pip-canvas" style="display:none;"></canvas>
+
+      <!-- Simulation Arena Top Toolbar -->
+      <div class="sim-arena-top-toolbar">
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-family: var(--font-mono, monospace); font-weight: 700; font-size: 11px; color: #00f0ff;">ARENA TOOLS:</span>
+          <button id="btn-add-fire" class="sim-arena-tool-btn" title="Click arena floor to spawn fire">🔥 Add Fire</button>
+          <button id="btn-add-box" class="sim-arena-tool-btn" title="Add wooden crate obstacle">📦 Add Crate</button>
+          <button id="btn-add-cylinder" class="sim-arena-tool-btn" title="Add steel barrel obstacle">🛢️ Add Barrel</button>
+          <button id="btn-add-wall" class="sim-arena-tool-btn" title="Add divider barrier">🧱 Add Wall</button>
+          <button id="btn-clear-fires" class="sim-arena-tool-btn" title="Extinguish all fires">🧹 Clear Fires</button>
+          <button id="btn-randomize-arena" class="sim-arena-tool-btn" title="Randomize obstacle arena layout">🎲 Randomize</button>
+          <button id="btn-reset-robot" class="sim-arena-tool-btn" title="Reset robot position to center">↺ Reset Bot</button>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span style="font-family: var(--font-mono, monospace); font-size: 11px; color: #8b949e;">LAYOUT:</span>
+          <select id="select-arena-layout" class="inspector-select" style="padding: 4px 10px;">
+            <option value="default">Default Proving Grounds</option>
+            <option value="corridor">Tight Corridor Maze</option>
+            <option value="dense">High-Density Urban Debris</option>
+            <option value="empty">Open Testing Floor</option>
+          </select>
+
+          <span style="font-family: var(--font-mono, monospace); font-size: 11px; color: #8b949e; margin-left: 8px;">CAM:</span>
+          <button class="view-btn sim-arena-tool-btn active" data-view="orbit">Orbit</button>
+          <button class="view-btn sim-arena-tool-btn" data-view="top">Top</button>
+          <button class="view-btn sim-arena-tool-btn" data-view="follow">Follow 3rd</button>
         </div>
       </div>
-    </div>
+    </section>
 
-    <!-- BENCH TEST DIRECT MODAL (Activated via 🛠️) -->
-    <div id="modal-bench-test" class="cockpit-modal-overlay cockpit-interactive" style="display: none; top: 120px; left: 240px; right: 240px; max-height: 280px;">
-      <div class="modal-header-toolbar">
-        <span style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 13px; color: #ffb800;">🛠️ HARDWARE BENCH TEST COMMANDS (DIRECT UART)</span>
-        <button id="btn-close-bench" class="btn-hud btn-hud-danger" style="padding: 4px 10px;">✕ Close</button>
+  </div> <!-- End .tab-view-container -->
+
+  <!-- ========================================================================
+       MODALS & OVERLAY DRAWERS (Accessible from both tabs)
+       ======================================================================== -->
+
+  <!-- 1. TACTICAL SLAM MODAL (Activated via 🗺️) -->
+  <div id="modal-schematic-slam" class="cockpit-modal-overlay cockpit-interactive" style="display: none;">
+    <div class="modal-header-toolbar">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 13px; color: #00f0ff; letter-spacing: 1px;">🗺️ TACTICAL SLAM OCCUPANCY GRID (45x45 ODOMETRY)</span>
+        <span id="dash-map-pose" class="status-pill-outline pill-green-outline" style="padding: 2px 8px; font-size: 10px;">X:0.0 Z:0.0 Y:0°</span>
       </div>
-      <div class="modal-content-stage" style="padding: 16px; background: #070b12; overflow-y: auto;">
-        <div class="bench-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
-          <button class="bench-btn success" data-cmd="start">▶ Start Patrol</button>
-          <button class="bench-btn warning" data-cmd="pause">⏸ Standby IDLE</button>
-          <button class="bench-btn info" data-cmd="handshake">🤝 Pi Handshake</button>
-          <button class="bench-btn" data-cmd="t">📡 Toggle Stream</button>
-          <button class="bench-btn" data-cmd="w">⬆ Forward (1s)</button>
-          <button class="bench-btn" data-cmd="s">⬇ Reverse (1s)</button>
-          <button class="bench-btn" data-cmd="a">⬅ Pivot Left</button>
-          <button class="bench-btn" data-cmd="d">➡ Pivot Right</button>
-          <button class="bench-btn warning" data-cmd="f">💧 Solenoid Pulse (1s)</button>
-          <button class="bench-btn danger" data-cmd="x">🛑 Motor E-Stop</button>
-          <button class="bench-btn" data-cmd="sweep">🔄 Turret Sweep</button>
-          <button class="bench-btn" data-cmd="h">⏹ Tilt Level (90°)</button>
+      <div style="display: flex; gap: 8px;">
+        <button id="btn-reset-map" class="btn-hud" style="padding: 4px 10px;">↺ Reset SLAM</button>
+        <button id="btn-close-schematic" class="btn-hud btn-hud-danger" style="padding: 4px 10px;">✕ Close</button>
+      </div>
+    </div>
+    <div class="modal-content-stage" style="background: #03060a; display: flex; align-items: center; justify-content: center;">
+      <canvas id="dashboard-map-canvas" width="640" height="420" style="display: block; width: 100%; height: 100%; object-fit: contain;"></canvas>
+    </div>
+  </div>
+
+  <!-- 2. VISION AI MODAL (Activated via 👁️) -->
+  <div id="modal-system-vision" class="cockpit-modal-overlay cockpit-interactive" style="display: none;">
+    <div class="modal-header-toolbar">
+      <div style="display: flex; align-items: center; gap: 10px;">
+        <span style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 13px; color: #00ff88; letter-spacing: 1px;">👁️ VISION AI OPTICAL TARGET LOCK (PI 3B STREAM)</span>
+        <span class="status-pill-outline pill-green-outline" style="padding: 2px 8px; font-size: 10px;">YOLOv8n / SSD ACTIVE</span>
+      </div>
+      <button id="btn-close-vision" class="btn-hud btn-hud-danger" style="padding: 4px 10px;">✕ Close</button>
+    </div>
+    <div class="modal-content-stage" style="background: #000; position: relative; display: flex; align-items: center; justify-content: center;">
+      <img id="dashboard-cam-mjpeg" class="dash-camera-stream-img" src="/video_feed" alt="Webcam Stream" crossorigin="anonymous" style="width: 100%; height: 100%; object-fit: contain;" />
+      <canvas id="dashboard-cam-canvas" width="640" height="360" style="position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none;"></canvas>
+    </div>
+  </div>
+
+  <!-- 3. DUAL ENGINEERING CONSOLE MODAL (Activated via 💻) -->
+  <div id="modal-engineering-console" class="cockpit-modal-overlay cockpit-interactive" style="display: none; top: 60px; left: 160px; right: 160px; bottom: 80px;">
+    <div class="modal-header-toolbar">
+      <span style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 13px; color: #fff;">⚡ RASPBERRY PI 3B & ESP32-WROOM DUAL TERMINAL STREAM</span>
+      <button id="btn-close-console" class="btn-hud btn-hud-danger" style="padding: 4px 10px;">✕ Close</button>
+    </div>
+    <div class="modal-content-stage" style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 12px; box-sizing: border-box; background: #070b12;">
+      <div style="display: flex; flex-direction: column;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-family: var(--font-mono, monospace); font-size: 11px;">
+          <span style="color: #ff3344;">🍓 Raspberry Pi 3B (Wi-Fi Bridge)</span>
+          <button id="btn-clear-pi" class="btn-hud" style="padding: 2px 6px; font-size: 10px;">Clear</button>
         </div>
+        <div id="terminal-pi" class="telemetry-stream-console" style="flex: 1; height: auto;"></div>
+      </div>
+      <div style="display: flex; flex-direction: column;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 6px; font-family: var(--font-mono, monospace); font-size: 11px;">
+          <span style="color: #00f0ff;">⚡ ESP32-WROOM FreeRTOS (UART2)</span>
+          <button id="btn-clear-esp" class="btn-hud" style="padding: 2px 6px; font-size: 10px;">Clear</button>
+        </div>
+        <div id="terminal-esp32" class="telemetry-stream-console" style="flex: 1; height: auto;"></div>
       </div>
     </div>
+  </div>
 
-  </div> <!-- End .defense-cockpit-viewport -->
+  <!-- 4. BENCH TEST DIRECT MODAL (Activated via 🛠️) -->
+  <div id="modal-bench-test" class="cockpit-modal-overlay cockpit-interactive" style="display: none; top: 120px; left: 240px; right: 240px; max-height: 280px;">
+    <div class="modal-header-toolbar">
+      <span style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 13px; color: #ffb800;">🛠️ HARDWARE BENCH TEST COMMANDS (DIRECT UART)</span>
+      <button id="btn-close-bench" class="btn-hud btn-hud-danger" style="padding: 4px 10px;">✕ Close</button>
+    </div>
+    <div class="modal-content-stage" style="padding: 16px; background: #070b12; overflow-y: auto;">
+      <div class="bench-grid" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
+        <button class="bench-btn success" data-cmd="start">▶ Start Patrol</button>
+        <button class="bench-btn warning" data-cmd="pause">⏸ Standby IDLE</button>
+        <button class="bench-btn info" data-cmd="handshake">🤝 Pi Handshake</button>
+        <button class="bench-btn" data-cmd="t">📡 Toggle Stream</button>
+        <button class="bench-btn" data-cmd="w">⬆ Forward (1s)</button>
+        <button class="bench-btn" data-cmd="s">⬇ Reverse (1s)</button>
+        <button class="bench-btn" data-cmd="a">⬅ Pivot Left</button>
+        <button class="bench-btn" data-cmd="d">➡ Pivot Right</button>
+        <button class="bench-btn warning" data-cmd="f">💧 Solenoid Pulse (1s)</button>
+        <button class="bench-btn danger" data-cmd="x">🛑 Motor E-Stop</button>
+        <button class="bench-btn" data-cmd="sweep">🔄 Turret Sweep</button>
+        <button class="bench-btn" data-cmd="h">⏹ Tilt Level (90°)</button>
+      </div>
+    </div>
+  </div>
 
   <!-- Secondary hidden canvas elements for internal radar and simulation telemetry -->
   <div style="display: none;">
@@ -432,15 +614,15 @@
   </div>
 
   <!-- Application Scripts -->
-  <script src="js/fire_system.js?v=20"></script>
-  <script src="js/obstacle_manager.js?v=20"></script>
-  <script src="js/robot_model.js?v=20"></script>
-  <script src="js/sensor_simulator.js?v=20"></script>
-  <script src="js/asset_loader.js?v=20"></script>
-  <script src="js/ultrasonic_mapper.js?v=20"></script>
-  <script src="js/nav_model_runner.js?v=20"></script>
-  <script src="js/sim_world.js?v=20"></script>
-  <script src="js/ui_controller.js?v=20"></script>
+  <script src="js/fire_system.js?v=25"></script>
+  <script src="js/obstacle_manager.js?v=25"></script>
+  <script src="js/robot_model.js?v=25"></script>
+  <script src="js/sensor_simulator.js?v=25"></script>
+  <script src="js/asset_loader.js?v=25"></script>
+  <script src="js/ultrasonic_mapper.js?v=25"></script>
+  <script src="js/nav_model_runner.js?v=25"></script>
+  <script src="js/sim_world.js?v=25"></script>
+  <script src="js/ui_controller.js?v=25"></script>
   <script>
     window.addEventListener('DOMContentLoaded', () => {
       const container = document.getElementById('canvas-container');
@@ -457,10 +639,12 @@
         try {
           const dt = Math.min(simWorld.clock.getDelta(), 0.05);
 
-          // 3D Scene update (renders the robot right in the middle!)
-          simWorld.update(dt);
+          // If on simulation tab, update 3D scene physics and arena
+          if (uiController.currentTab === 'simulation') {
+            simWorld.update(dt);
+          }
 
-          // Cockpit telemetry, waveforms, charts, and SLAM updates
+          // Cockpit telemetry, waveforms, charts, static robot inspector, and SLAM updates
           uiController.update(dt);
         } catch (err) {
           console.error('[Render Loop Error]', err);

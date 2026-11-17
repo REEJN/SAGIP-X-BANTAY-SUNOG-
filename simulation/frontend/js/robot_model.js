@@ -42,6 +42,7 @@ class RobotModel {
     this.root.add(this.proceduralGroup);
 
     this.initProceduralModel();
+    this.initSensorHotspotsAndLabels();
     this.scene.add(this.root);
   }
 
@@ -320,6 +321,171 @@ class RobotModel {
 
     this.proceduralGroup.add(group);
     this.ultrasonicMounts[key] = group;
+  }
+
+  initSensorHotspotsAndLabels() {
+    // -------------------------------------------------------------------------
+    // Sensor Hotspots Definition (Coordinates relative to robot root)
+    // -------------------------------------------------------------------------
+    this.sensorHotspots = {
+      front_sonar: { pos: new THREE.Vector3(0, 0.08, 0.17), name: 'Front HC-SR04 (0°)' },
+      left_sonar: { pos: new THREE.Vector3(-0.11, 0.08, 0.14), name: 'Left HC-SR04 (+45°)' },
+      right_sonar: { pos: new THREE.Vector3(0.11, 0.08, 0.14), name: 'Right HC-SR04 (-45°)' },
+      imu: { pos: new THREE.Vector3(0, 0.09, 0), name: 'MPU-6050 6-Axis IMU' },
+      flame_ir: { pos: new THREE.Vector3(0, 0.17, 0.10), name: 'LM393 IR Flame Sensor' },
+      camera: { pos: new THREE.Vector3(0, 0.15, 0.11), name: 'Vision AI Optical Camera' },
+      turret: { pos: new THREE.Vector3(0, 0.13, 0.08), name: 'MG90S Pitch Tilt Gimbal' },
+      solenoid: { pos: new THREE.Vector3(0, 0.19, -0.05), name: 'Suppression Canister & MG996R' },
+      motors: { pos: new THREE.Vector3(0, 0.05, 0), name: 'TB6612FNG 4WD Skid Drive' },
+      compute: { pos: new THREE.Vector3(0, 0.14, 0.01), name: 'Raspberry Pi 3B & ESP32' }
+    };
+
+    // -------------------------------------------------------------------------
+    // 3D Floating Sprite Labels Group
+    // -------------------------------------------------------------------------
+    this.labelsGroup = new THREE.Group();
+    this.labelsGroup.visible = false;
+    this.root.add(this.labelsGroup);
+
+    const labelDefs = [
+      { key: 'front_sonar', num: '1', text: 'HC-SR04 FRONT 0°', offset: new THREE.Vector3(0, 0.07, 0.04) },
+      { key: 'left_sonar', num: '2', text: 'HC-SR04 LEFT +45°', offset: new THREE.Vector3(-0.06, 0.06, 0.03) },
+      { key: 'right_sonar', num: '3', text: 'HC-SR04 RIGHT -45°', offset: new THREE.Vector3(0.06, 0.06, 0.03) },
+      { key: 'imu', num: '4', text: 'MPU-6050 6-AXIS IMU', offset: new THREE.Vector3(0, 0.09, 0) },
+      { key: 'flame_ir', num: '5', text: 'LM393 OPTICAL IR', offset: new THREE.Vector3(0.07, 0.05, 0.02) },
+      { key: 'camera', num: '6', text: 'OPTICAL CAM / YOLO', offset: new THREE.Vector3(-0.07, 0.05, 0.02) },
+      { key: 'turret', num: '7', text: 'MG90S TILT GIMBAL', offset: new THREE.Vector3(0, 0.06, -0.03) },
+      { key: 'solenoid', num: '8', text: 'MG996R EXTINGUISHER', offset: new THREE.Vector3(0, 0.07, -0.02) },
+      { key: 'motors', num: '9', text: 'TB6612FNG 4WD DRIVE', offset: new THREE.Vector3(0, -0.04, 0) },
+      { key: 'compute', num: '10', text: 'ESP32 & PI 3B CORE', offset: new THREE.Vector3(0, 0.08, -0.05) }
+    ];
+
+    labelDefs.forEach(def => {
+      const hotspot = this.sensorHotspots[def.key];
+      if (hotspot) {
+        const sprite = this.createLabelSprite(def.text, def.num);
+        sprite.position.copy(hotspot.pos).add(def.offset);
+        this.labelsGroup.add(sprite);
+
+        // Thin connector line from hotspot to sprite
+        const lineGeo = new THREE.BufferGeometry().setFromPoints([
+          hotspot.pos,
+          sprite.position
+        ]);
+        const lineMat = new THREE.LineBasicMaterial({ color: 0x00f0ff, transparent: true, opacity: 0.6 });
+        const line = new THREE.Line(lineGeo, lineMat);
+        this.labelsGroup.add(line);
+      }
+    });
+
+    // -------------------------------------------------------------------------
+    // Spotlight Highlight Marker Mesh (Animates when a sensor is clicked)
+    // -------------------------------------------------------------------------
+    const ringGeo = new THREE.RingGeometry(0.022, 0.028, 24);
+    ringGeo.rotateX(-Math.PI / 2);
+    const ringMat = new THREE.MeshBasicMaterial({
+      color: 0x00ff88,
+      side: THREE.DoubleSide,
+      transparent: true,
+      opacity: 0.0
+    });
+    this.spotlightRing = new THREE.Mesh(ringGeo, ringMat);
+    this.root.add(this.spotlightRing);
+    this.spotlightAnim = 0;
+  }
+
+  createLabelSprite(text, numberTag) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 64;
+    const ctx = canvas.getContext('2d');
+
+    // Translucent dark box
+    ctx.fillStyle = 'rgba(7, 11, 18, 0.90)';
+    ctx.strokeStyle = '#00f0ff';
+    ctx.lineWidth = 2.5;
+    if (ctx.roundRect) {
+      ctx.beginPath();
+      ctx.roundRect(4, 4, 248, 56, 10);
+      ctx.fill();
+      ctx.stroke();
+    } else {
+      ctx.fillRect(4, 4, 248, 56);
+      ctx.strokeRect(4, 4, 248, 56);
+    }
+
+    // Badge circle
+    ctx.fillStyle = '#00f0ff';
+    ctx.beginPath();
+    ctx.arc(30, 32, 16, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Badge number
+    ctx.fillStyle = '#000';
+    ctx.font = 'bold 18px monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(numberTag, 30, 32);
+
+    // Text label
+    ctx.fillStyle = '#ffffff';
+    ctx.font = 'bold 15px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(text, 54, 32);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(0.16, 0.04, 1);
+    return sprite;
+  }
+
+  setRenderMode(mode) {
+    this.currentRenderMode = mode;
+
+    if (mode === 'solid') {
+      // Restore standard colored materials
+      this.proceduralGroup.traverse((child) => {
+        if (child.isMesh && child.userData.origMaterial) {
+          child.material = child.userData.origMaterial;
+        }
+      });
+      if (this.labelsGroup) this.labelsGroup.visible = false;
+    } else if (mode === 'hologram') {
+      // Tactical emerald/cyan wireframe + glowing edge style (matching reference image)
+      this.proceduralGroup.traverse((child) => {
+        if (child.isMesh) {
+          if (!child.userData.origMaterial) {
+            child.userData.origMaterial = child.material;
+          }
+          child.material = new THREE.MeshBasicMaterial({
+            color: 0x00f0ff,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.55
+          });
+        }
+      });
+      if (this.labelsGroup) this.labelsGroup.visible = false;
+    } else if (mode === 'labels') {
+      // Keep solid or hologram and show 3D labels
+      this.proceduralGroup.traverse((child) => {
+        if (child.isMesh && child.userData.origMaterial) {
+          child.material = child.userData.origMaterial;
+        }
+      });
+      if (this.labelsGroup) this.labelsGroup.visible = true;
+    }
+  }
+
+  highlightHotspot(key) {
+    const spot = this.sensorHotspots ? this.sensorHotspots[key] : null;
+    if (spot && this.spotlightRing) {
+      this.spotlightRing.position.copy(spot.pos);
+      this.spotlightRing.material.opacity = 1.0;
+      this.spotlightAnim = 1.0;
+    }
   }
 
   /**
@@ -614,6 +780,14 @@ class RobotModel {
       const pulseSpeed = this.solenoidActive ? 14.0 : 4.5;
       const intensity = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(Date.now() * 0.001 * pulseSpeed));
       this.beaconMat.emissiveIntensity = intensity;
+    }
+
+    // Spotlight Ring decay animation
+    if (this.spotlightRing && this.spotlightAnim > 0) {
+      this.spotlightAnim = Math.max(0, this.spotlightAnim - (dt * 0.4));
+      this.spotlightRing.material.opacity = this.spotlightAnim;
+      const s = 1.0 + (1.0 - this.spotlightAnim) * 0.5;
+      this.spotlightRing.scale.set(s, s, s);
     }
   }
 

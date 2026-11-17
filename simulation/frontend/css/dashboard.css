@@ -2556,15 +2556,18 @@ html, body {
 
 /* Fullscreen Cockpit Container */
 .defense-cockpit-viewport {
-  position: fixed;
-  inset: 0;
-  width: 100vw;
-  height: 100vh;
+  position: absolute;
+  top: 54px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100%;
+  height: calc(100vh - 54px);
   z-index: 10;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 16px 24px 20px 24px;
+  padding: 10px 18px 12px 18px;
   box-sizing: border-box;
   pointer-events: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -2586,7 +2589,7 @@ html, body {
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
-  padding: 16px 18px;
+  padding: 8px 12px;
   box-sizing: border-box;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
@@ -2599,12 +2602,21 @@ html, body {
    1. TOP NAVIGATION / STATUS HEADER
    -------------------------------------------------------------------------- */
 .cockpit-top-bar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 54px;
+  padding: 0 18px;
+  background: rgba(10, 16, 25, 0.94);
+  backdrop-filter: blur(16px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  box-sizing: border-box;
+  z-index: 50;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  width: 100%;
-  gap: 16px;
-  margin-bottom: 8px;
+  gap: 12px;
 }
 
 .cockpit-brand-group {
@@ -2615,10 +2627,12 @@ html, body {
 
 .cockpit-logo-badge {
   font-family: "Rajdhani", "Segoe UI", sans-serif;
-  font-size: 20px;
+  font-size: 15px;
   font-weight: 800;
-  letter-spacing: 2px;
+  letter-spacing: 1.5px;
   color: #fff;
+  white-space: nowrap;
+  flex-shrink: 0;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2841,18 +2855,18 @@ html, body {
 }
 
 .cockpit-left-col {
-  width: 320px;
+  width: 290px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 6px;
   pointer-events: none;
 }
 
 .cockpit-right-col {
-  width: 340px;
+  width: 290px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 6px;
   pointer-events: none;
 }
 
@@ -2872,12 +2886,12 @@ html, body {
   color: #6e7681;
   letter-spacing: 1px;
   text-transform: uppercase;
-  margin-bottom: 12px;
+  margin-bottom: 6px;
 }
 
 /* Segmented System Readiness Bar */
 .readiness-meter-wrap {
-  margin-bottom: 14px;
+  margin-bottom: 6px;
 }
 
 .readiness-header-row {
@@ -2924,7 +2938,7 @@ html, body {
 .status-checklist {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 3px;
 }
 
 .checklist-row {
@@ -3163,9 +3177,10 @@ html, body {
    -------------------------------------------------------------------------- */
 .cockpit-bottom-dock {
   width: 100%;
+  height: 125px;
   display: grid;
-  grid-template-columns: 460px 180px 1fr;
-  gap: 14px;
+  grid-template-columns: 400px 200px 1fr;
+  gap: 8px;
   align-items: stretch;
   pointer-events: none;
 }
@@ -3362,5 +3377,341 @@ html, body {
   flex: 1;
   position: relative;
   overflow: hidden;
+}
+
+/* --------------------------------------------------------------------------
+   6. PRIMARY NAVIGATION TABS (Telemetry Dashboard vs Simulation Arena)
+   -------------------------------------------------------------------------- */
+.cockpit-nav-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(8, 14, 22, 0.7);
+  padding: 3px 6px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.cockpit-nav-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #8b949e;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  padding: 5px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cockpit-nav-tab:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.cockpit-nav-tab.active {
+  background: rgba(0, 240, 255, 0.15);
+  border-color: rgba(0, 240, 255, 0.5);
+  color: #00f0ff;
+  box-shadow: 0 0 12px rgba(0, 240, 255, 0.25);
+}
+
+/* Tab Views */
+.tab-view-container {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.tab-view {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+}
+
+.tab-view.active {
+  display: block;
+}
+
+/* --------------------------------------------------------------------------
+   7. CENTER STATIC ROBOT INSPECTOR VIEWPORT
+   -------------------------------------------------------------------------- */
+.static-robot-viewport {
+  position: absolute;
+  top: 6px;
+  left: 305px;
+  right: 305px;
+  bottom: 135px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  z-index: 5;
+}
+
+#dashboard-robot-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+  cursor: grab;
+}
+
+#dashboard-robot-canvas:active {
+  cursor: grabbing;
+}
+
+/* Floating Inspector Controls Header */
+.inspector-control-deck {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  background: rgba(10, 16, 25, 0.88);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(0, 240, 255, 0.25);
+  border-radius: 10px;
+  padding: 6px 14px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
+  z-index: 10;
+}
+
+.inspector-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inspector-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #8b949e;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.inspector-btn:hover {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.inspector-btn.active {
+  background: rgba(0, 255, 136, 0.15);
+  border-color: #00ff88;
+  color: #00ff88;
+  box-shadow: 0 0 8px rgba(0, 255, 136, 0.3);
+}
+
+.inspector-btn.hologram-btn.active {
+  background: rgba(0, 240, 255, 0.18);
+  border-color: #00f0ff;
+  color: #00f0ff;
+  box-shadow: 0 0 10px rgba(0, 240, 255, 0.4);
+}
+
+.inspector-select {
+  background: rgba(15, 23, 36, 0.95);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  color: #00f0ff;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+}
+
+/* --------------------------------------------------------------------------
+   8. REAL SENSOR DATA TELEMETRY WIDGETS
+   -------------------------------------------------------------------------- */
+/* HC-SR04 Tri-Sonic Perception Gauges */
+.sonar-gauges-container {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
+}
+
+.sonar-gauge-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sonar-gauge-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+
+.sonar-gauge-track {
+  width: 100%;
+  height: 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sonar-gauge-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #00ff88, #00f0ff);
+  border-radius: 2px;
+  transition: width 0.15s ease-out, background-color 0.15s ease-out;
+}
+
+.sonar-gauge-fill.danger {
+  background: linear-gradient(90deg, #ff3344, #ff7b00);
+  box-shadow: 0 0 8px rgba(255, 51, 68, 0.6);
+}
+
+.sonar-gauge-fill.warning {
+  background: linear-gradient(90deg, #ffb800, #ff7b00);
+}
+
+.sonar-standoff-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 10%; /* 30cm out of 300cm max = 10% */
+  width: 2px;
+  background: #ff3344;
+  box-shadow: 0 0 6px #ff3344;
+  z-index: 2;
+}
+
+/* MPU-6050 6-Axis Data Grid */
+.imu-matrix-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.imu-axis-card {
+  background: rgba(14, 22, 34, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  padding: 6px 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.imu-axis-title {
+  font-size: 9px;
+  color: #6e7681;
+  font-family: var(--font-mono, monospace);
+  letter-spacing: 0.5px;
+}
+
+.imu-axis-val {
+  font-size: 13px;
+  font-weight: 800;
+  font-family: var(--font-mono, monospace);
+  color: #00f0ff;
+  margin-top: 2px;
+}
+
+/* 3S LiPo Individual Cell Monitor */
+.lipo-cells-deck {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.lipo-cell-box {
+  background: rgba(14, 22, 34, 0.9);
+  border: 1px solid rgba(0, 255, 136, 0.2);
+  border-radius: 6px;
+  padding: 5px 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+.lipo-cell-label {
+  font-size: 9px;
+  color: #8b949e;
+  font-family: var(--font-mono, monospace);
+}
+
+.lipo-cell-val {
+  font-size: 12px;
+  font-weight: 700;
+  font-family: var(--font-mono, monospace);
+  color: #00ff88;
+}
+
+.lipo-cell-bar {
+  width: 100%;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  margin-top: 4px;
+  overflow: hidden;
+}
+
+.lipo-cell-fill {
+  height: 100%;
+  background: #00ff88;
+  border-radius: 2px;
+  width: 85%;
+}
+
+/* Simulation Arena Sub-Page Toolbar Overlay */
+.sim-arena-top-toolbar {
+  position: absolute;
+  top: 64px;
+  left: 20px;
+  right: 20px;
+  height: 44px;
+  background: rgba(10, 16, 25, 0.88);
+  backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+  z-index: 10;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.6);
+}
+
+.sim-arena-tool-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #e6edf3;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.sim-arena-tool-btn:hover {
+  background: rgba(0, 240, 255, 0.15);
+  border-color: #00f0ff;
+  color: #00f0ff;
 }
 

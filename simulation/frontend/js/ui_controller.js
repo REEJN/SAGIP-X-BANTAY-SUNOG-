@@ -84,6 +84,8 @@ class UIController {
     this.initWebSocket();
     this.initCameraStreamControls();
     this.initCockpitAnimations();
+    this.initTabNavigation();
+    this.initStaticRobotInspector();
     this.updatePhysicalHardwareStatus(false, null, 115200);
     this.renderPiLogs();
     this.renderEspLogs();
@@ -227,20 +229,201 @@ class UIController {
     }
   }
 
+  initTabNavigation() {
+    this.currentTab = 'telemetry';
+
+    const tabTelem = document.getElementById('tab-nav-telemetry');
+    const tabSim = document.getElementById('tab-nav-simulation');
+    const viewTelem = document.getElementById('view-telemetry-cockpit');
+    const viewSim = document.getElementById('view-simulation-arena');
+
+    const switchTab = (tabName) => {
+      this.currentTab = tabName;
+      if (tabTelem) tabTelem.classList.toggle('active', tabName === 'telemetry');
+      if (tabSim) tabSim.classList.toggle('active', tabName === 'simulation');
+
+      if (viewTelem) viewTelem.classList.toggle('active', tabName === 'telemetry');
+      if (viewSim) viewSim.classList.toggle('active', tabName === 'simulation');
+
+      if (tabName === 'simulation') {
+        if (this.sim && this.sim.onWindowResize) {
+          this.sim.onWindowResize();
+        }
+      } else {
+        const canvas = document.getElementById('dashboard-robot-canvas');
+        if (canvas && this.staticCamera && this.staticRenderer) {
+          this.staticCamera.aspect = canvas.clientWidth / canvas.clientHeight;
+          this.staticCamera.updateProjectionMatrix();
+          this.staticRenderer.setSize(canvas.clientWidth, canvas.clientHeight);
+        }
+      }
+    };
+
+    tabTelem?.addEventListener('click', () => switchTab('telemetry'));
+    tabSim?.addEventListener('click', () => switchTab('simulation'));
+  }
+
+  initStaticRobotInspector() {
+    const canvas = document.getElementById('dashboard-robot-canvas');
+    if (!canvas) return;
+
+    this.staticScene = new THREE.Scene();
+    this.staticScene.background = new THREE.Color(0x06090e);
+
+    // Subtle polar grid under the robot
+    const polarGrid = new THREE.PolarGridHelper(0.45, 8, 8, 36, 0x00f0ff, 0x162233);
+    polarGrid.position.y = 0.001;
+    this.staticScene.add(polarGrid);
+
+    // Studio Lighting
+    const ambientLight = new THREE.AmbientLight(0x4b5563, 1.4);
+    this.staticScene.add(ambientLight);
+
+    const dirLight = new THREE.DirectionalLight(0xfff5ea, 1.6);
+    dirLight.position.set(3, 5, 4);
+    this.staticScene.add(dirLight);
+
+    const rimLight = new THREE.DirectionalLight(0x00f0ff, 1.2);
+    rimLight.position.set(-3, 2, -3);
+    this.staticScene.add(rimLight);
+
+    // Camera
+    const aspect = (canvas.clientWidth || 600) / (canvas.clientHeight || 450);
+    this.staticCamera = new THREE.PerspectiveCamera(38, aspect, 0.05, 20.0);
+    this.staticCamera.position.set(0.68, 0.44, 0.65);
+
+    // WebGL Renderer
+    this.staticRenderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true, alpha: true });
+    this.staticRenderer.setSize(canvas.clientWidth, canvas.clientHeight);
+    this.staticRenderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
+    this.staticRenderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.staticRenderer.toneMappingExposure = 1.15;
+
+    // OrbitControls
+    if (typeof THREE.OrbitControls !== 'undefined') {
+      this.staticControls = new THREE.OrbitControls(this.staticCamera, canvas);
+      this.staticControls.enableDamping = true;
+      this.staticControls.dampingFactor = 0.08;
+      this.staticControls.target.set(0, 0.10, 0);
+      this.staticControls.minDistance = 0.35;
+      this.staticControls.maxDistance = 2.5;
+      this.staticControls.maxPolarAngle = Math.PI / 2 + 0.05;
+    }
+
+    // Static Robot Model
+    this.staticRobot = new RobotModel(this.staticScene);
+    this.staticRobot.position.set(0, 0, 0);
+    this.staticRobot.yaw = Math.PI * 0.35;
+    this.staticRobot.root.rotation.y = this.staticRobot.yaw;
+
+    // Render Mode Switchers
+    document.getElementById('btn-render-solid')?.addEventListener('click', () => {
+      document.querySelectorAll('.inspector-btn[id^="btn-render-"]').forEach(b => b.classList.remove('active'));
+      document.getElementById('btn-render-solid')?.classList.add('active');
+      this.staticRobot.setRenderMode('solid');
+    });
+
+    document.getElementById('btn-render-hologram')?.addEventListener('click', () => {
+      document.querySelectorAll('.inspector-btn[id^="btn-render-"]').forEach(b => b.classList.remove('active'));
+      document.getElementById('btn-render-hologram')?.classList.add('active');
+      this.staticRobot.setRenderMode('hologram');
+    });
+
+    document.getElementById('btn-render-labels')?.addEventListener('click', () => {
+      const btn = document.getElementById('btn-render-labels');
+      const isVisible = this.staticRobot.labelsGroup && this.staticRobot.labelsGroup.visible;
+      if (isVisible) {
+        btn?.classList.remove('active');
+        if (this.staticRobot.labelsGroup) this.staticRobot.labelsGroup.visible = false;
+      } else {
+        btn?.classList.add('active');
+        if (this.staticRobot.labelsGroup) this.staticRobot.labelsGroup.visible = true;
+      }
+    });
+
+    // Camera View Presets
+    document.querySelectorAll('.view-preset-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.view-preset-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const camMode = btn.dataset.cam;
+
+        if (camMode === 'iso') {
+          this.staticCamera.position.set(0.68, 0.44, 0.65);
+          if (this.staticControls) this.staticControls.target.set(0, 0.10, 0);
+        } else if (camMode === 'front') {
+          this.staticCamera.position.set(0, 0.22, 0.85);
+          if (this.staticControls) this.staticControls.target.set(0, 0.10, 0.08);
+        } else if (camMode === 'top') {
+          this.staticCamera.position.set(0.001, 1.10, 0);
+          if (this.staticControls) this.staticControls.target.set(0, 0.10, 0);
+        } else if (camMode === 'turret') {
+          this.staticCamera.position.set(0.18, 0.28, 0.38);
+          if (this.staticControls) this.staticControls.target.set(0, 0.14, 0.08);
+        }
+      });
+    });
+
+    // Sensor Hotspots Selector
+    const sensorSelect = document.getElementById('select-sensor-hotspot');
+    if (sensorSelect) {
+      sensorSelect.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (val) {
+          this.staticRobot.highlightHotspot(val);
+
+          // Card spotlight pulse
+          if (val.includes('sonar')) {
+            const card = document.getElementById('card-sonar-perception');
+            if (card) {
+              card.style.boxShadow = '0 0 24px rgba(0, 255, 136, 0.6)';
+              setTimeout(() => { card.style.boxShadow = ''; }, 1800);
+            }
+          } else if (val === 'imu') {
+            const card = document.getElementById('card-imu-telemetry');
+            if (card) {
+              card.style.boxShadow = '0 0 24px rgba(0, 240, 255, 0.6)';
+              setTimeout(() => { card.style.boxShadow = ''; }, 1800);
+            }
+          }
+        }
+      });
+    }
+
+    // Resize Handler
+    window.addEventListener('resize', () => {
+      if (canvas.clientWidth && canvas.clientHeight) {
+        this.staticCamera.aspect = canvas.clientWidth / canvas.clientHeight;
+        this.staticCamera.updateProjectionMatrix();
+        this.staticRenderer.setSize(canvas.clientWidth, canvas.clientHeight);
+      }
+    });
+  }
+
   updateCockpitHud(dt, telem) {
     if (!telem) return;
 
-    // 1. Airframe System Readiness
+    // 0. Uptime Clock (HH:MM:SS)
+    const uptimeMs = telem.uptime || (Date.now() - this.missionStartTime);
+    const totSec = Math.floor(uptimeMs / 1000);
+    const hh = String(Math.floor(totSec / 3600)).padStart(2, '0');
+    const mm = String(Math.floor((totSec % 3600) / 60)).padStart(2, '0');
+    const ss = String(totSec % 60).padStart(2, '0');
+    const upEl = document.getElementById('cockpit-uptime');
+    if (upEl) upEl.textContent = `${hh}:${mm}:${ss}`;
+
+    // 1. Robot Subsystem Health & Diagnostics
     const readinessScoreEl = document.getElementById('hud-readiness-score');
     const segMeter = document.getElementById('segmented-readiness-meter');
     const isPhysical = !!this.physicalHardwareConnected;
-    const hasImu = isPhysical ? (telem.imu_connected !== false) : true;
-    const hasSensors = (telem.dist_front !== undefined && telem.dist_front > 0);
+    const hasImu = isPhysical ? (telem.imu_connected !== false && telem.mpu_connected !== false) : true;
+    const hasSonar = (telem.dist_front !== undefined && telem.dist_front > 0);
+    const isEstop = (this.robotState === 'EMERGENCY_STOP');
 
     let readiness = 95;
     if (!hasImu) readiness -= 20;
-    if (!hasSensors) readiness -= 15;
-    if (this.robotState === 'EMERGENCY_STOP') readiness = 20;
+    if (!hasSonar) readiness -= 15;
+    if (isEstop) readiness = 15;
 
     if (readinessScoreEl) readinessScoreEl.textContent = `${readiness}%`;
     if (segMeter) {
@@ -251,88 +434,92 @@ class UIController {
       }
     }
 
-    // 2. Checklist items
-    const chkAirframe = document.getElementById('chk-airframe-status');
-    if (chkAirframe) {
-      chkAirframe.textContent = (this.robotState === 'EMERGENCY_STOP') ? 'E-STOP' : 'NOMINAL';
-      chkAirframe.className = `checklist-badge ${this.robotState === 'EMERGENCY_STOP' ? 'txt-warn' : 'txt-nominal'}`;
-    }
+    // 7-Item Subsystem Checklist
+    const updateChecklistRow = (statusId, dotId, label, isOk, isWarn = false) => {
+      const statusEl = document.getElementById(statusId);
+      const dotEl = document.getElementById(dotId);
+      if (statusEl) {
+        statusEl.textContent = label;
+        statusEl.className = `checklist-badge ${isOk ? 'txt-nominal' : (isWarn ? 'txt-warn' : 'txt-warn')}`;
+      }
+      if (dotEl) {
+        dotEl.className = `status-dot-sm ${isOk ? '' : 'dot-warn'}`;
+      }
+    };
 
-    const chkEnv = document.getElementById('chk-env-status');
-    const chkEnvDot = document.getElementById('chk-env-dot');
+    updateChecklistRow('chk-imu-status', 'chk-imu-dot', hasImu ? (isPhysical ? (telem.imu_calibrated ? 'CALIBRATED' : 'ONLINE') : 'ONLINE') : 'ERROR (I2C)', hasImu);
+    updateChecklistRow('chk-sonar-status', 'chk-sonar-dot', hasSonar ? 'ACTIVE PING' : 'NO ECHO', hasSonar);
     const flameDetected = !!(telem.flame_detected || (this.latestCameraStatus && this.latestCameraStatus.flame_detected));
-    if (chkEnv && chkEnvDot) {
-      if (flameDetected) {
-        chkEnv.textContent = 'FIRE TRIP';
-        chkEnv.className = 'checklist-badge txt-warn';
-        chkEnvDot.className = 'status-dot-sm dot-warn';
-      } else {
-        chkEnv.textContent = 'NOMINAL';
-        chkEnv.className = 'checklist-badge txt-nominal';
-        chkEnvDot.className = 'status-dot-sm';
+    updateChecklistRow('chk-flame-status', 'chk-flame-dot', flameDetected ? 'TRIP DETECTED' : 'ARMED', !flameDetected, flameDetected);
+    updateChecklistRow('chk-motor-status', 'chk-motor-dot', isEstop ? 'DISABLED' : 'STBY HIGH', !isEstop);
+    const tiltVal = Math.round(telem.tilt_angle || 90);
+    updateChecklistRow('chk-turret-status', 'chk-turret-dot', `${tiltVal}° ${tiltVal === 90 ? '(LEVEL)' : ''}`, true);
+    const solActive = !!telem.solenoid_active;
+    updateChecklistRow('chk-extinguisher-status', 'chk-extinguisher-dot', solActive ? 'DISCHARGING (90°)' : 'STANDBY (0°)', !solActive, solActive);
+    updateChecklistRow('chk-pi-status', 'chk-pi-dot', isPhysical ? 'CONNECTED' : 'SIMULATED LINK', true);
+
+    // 2. HC-SR04 Tri-Sonic Perception Gauges
+    const updateSonarRow = (cmId, inId, barId, distCm) => {
+      const cmEl = document.getElementById(cmId);
+      const inEl = document.getElementById(inId);
+      const barEl = document.getElementById(barId);
+      const cm = (distCm !== undefined) ? Number(distCm) : 150.0;
+      const inches = (cm / 2.54).toFixed(1);
+
+      if (cmEl) cmEl.textContent = cm.toFixed(1);
+      if (inEl) inEl.textContent = inches;
+      if (barEl) {
+        const pct = Math.min(100, Math.max(4, Math.round((cm / 300.0) * 100)));
+        barEl.style.width = `${pct}%`;
+        if (cm < 30.0) {
+          barEl.className = 'sonar-gauge-fill danger';
+        } else if (cm < 60.0) {
+          barEl.className = 'sonar-gauge-fill warning';
+        } else {
+          barEl.className = 'sonar-gauge-fill';
+        }
       }
-    }
+    };
 
-    const chkSensors = document.getElementById('chk-sensors-status');
-    const chkSensorsDot = document.getElementById('chk-sensors-dot');
-    if (chkSensors && chkSensorsDot) {
-      if (hasSensors) {
-        chkSensors.textContent = 'ONLINE';
-        chkSensors.className = 'checklist-badge txt-nominal';
-        chkSensorsDot.className = 'status-dot-sm';
-      } else {
-        chkSensors.textContent = 'OFFLINE';
-        chkSensors.className = 'checklist-badge txt-warn';
-        chkSensorsDot.className = 'status-dot-sm dot-warn';
-      }
-    }
+    updateSonarRow('sonar-val-cm-front', 'sonar-val-in-front', 'sonar-gauge-front', telem.dist_front);
+    updateSonarRow('sonar-val-cm-left', 'sonar-val-in-left', 'sonar-gauge-left', telem.dist_left);
+    updateSonarRow('sonar-val-cm-right', 'sonar-val-in-right', 'sonar-gauge-right', telem.dist_right);
 
-    const chkImu = document.getElementById('dash-imu-status');
-    const chkImuDot = document.getElementById('chk-imu-dot');
-    if (chkImu && chkImuDot) {
-      if (hasImu) {
-        chkImu.textContent = isPhysical ? (telem.imu_calibrated ? 'CALIBRATED' : 'ONLINE') : 'SIMULATED';
-        chkImu.className = 'checklist-badge txt-nominal';
-        chkImuDot.className = 'status-dot-sm';
-      } else {
-        chkImu.textContent = 'OFFLINE';
-        chkImu.className = 'checklist-badge txt-warn';
-        chkImuDot.className = 'status-dot-sm dot-warn';
-      }
-    }
+    // 3. MPU-6050 6-Axis Inertial Telemetry
+    const ax = telem.accel_x !== undefined ? telem.accel_x : (telem.ax !== undefined ? telem.ax : 0.01);
+    const ay = telem.accel_y !== undefined ? telem.accel_y : (telem.ay !== undefined ? telem.ay : -0.02);
+    const az = telem.accel_z !== undefined ? telem.accel_z : (telem.az !== undefined ? telem.az : 0.98);
 
-    // 3. Payload status bars
-    const eoPct = flameDetected ? 96 : 78;
-    const lidarPct = Math.min(95, Math.max(30, Math.round(100 - ((telem.dist_front || 150) / 300) * 70)));
-    const commsPct = this.physicalHardwareConnected ? 98 : (this.socket && this.socket.readyState === 1 ? 88 : 20);
+    const gx = telem.gyro_x !== undefined ? telem.gyro_x : (telem.gx !== undefined ? telem.gx : 0.1);
+    const gy = telem.gyro_y !== undefined ? telem.gyro_y : (telem.gy !== undefined ? telem.gy : -0.3);
+    const gz = telem.gyro_z !== undefined ? telem.gyro_z : (telem.gz !== undefined ? telem.gz : 0.0);
 
-    const barEo = document.getElementById('payload-bar-eo');
-    const txtEo = document.getElementById('payload-pct-eo');
-    if (barEo && txtEo) {
-      barEo.style.height = `${eoPct}%`;
-      txtEo.textContent = `${eoPct}%`;
-    }
+    const pitch = telem.pitch !== undefined ? telem.pitch : (telem.pitch_deg || -0.6);
+    const roll = telem.roll !== undefined ? telem.roll : (telem.roll_deg || 1.2);
+    const dieTemp = telem.temp_c !== undefined ? telem.temp_c : (telem.imu_temp || 28.4);
 
-    const barLidar = document.getElementById('payload-bar-lidar');
-    const txtLidar = document.getElementById('payload-pct-lidar');
-    if (barLidar && txtLidar) {
-      barLidar.style.height = `${lidarPct}%`;
-      txtLidar.textContent = `${lidarPct}%`;
-    }
+    const axEl = document.getElementById('imu-val-ax');
+    const ayEl = document.getElementById('imu-val-ay');
+    const azEl = document.getElementById('imu-val-az');
+    if (axEl) axEl.textContent = `${ax >= 0 ? '+' : ''}${Number(ax).toFixed(2)} g`;
+    if (ayEl) ayEl.textContent = `${ay >= 0 ? '+' : ''}${Number(ay).toFixed(2)} g`;
+    if (azEl) azEl.textContent = `${az >= 0 ? '+' : ''}${Number(az).toFixed(2)} g`;
 
-    const barComms = document.getElementById('payload-bar-comms');
-    const txtComms = document.getElementById('payload-pct-comms');
-    if (barComms && txtComms) {
-      barComms.style.height = `${commsPct}%`;
-      txtComms.textContent = `${commsPct}%`;
-    }
+    const gxEl = document.getElementById('imu-val-gx');
+    const gyEl = document.getElementById('imu-val-gy');
+    const gzEl = document.getElementById('imu-val-gz');
+    if (gxEl) gxEl.textContent = `${gx >= 0 ? '+' : ''}${Number(gx).toFixed(1)} °/s`;
+    if (gyEl) gyEl.textContent = `${gy >= 0 ? '+' : ''}${Number(gy).toFixed(1)} °/s`;
+    if (gzEl) gzEl.textContent = `${gz >= 0 ? '+' : ''}${Number(gz).toFixed(1)} °/s`;
 
-    const overallEl = document.getElementById('payload-overall-pct');
-    if (overallEl) {
-      overallEl.textContent = `${Math.round((eoPct + lidarPct + commsPct) / 3)} %`;
-    }
+    const pitchEl = document.getElementById('imu-val-pitch');
+    const rollEl = document.getElementById('imu-val-roll');
+    const tempEl = document.getElementById('imu-val-temp');
+    if (pitchEl) pitchEl.textContent = `${pitch >= 0 ? '+' : ''}${Number(pitch).toFixed(1)}°`;
+    if (rollEl) rollEl.textContent = `${roll >= 0 ? '+' : ''}${Number(roll).toFixed(1)}°`;
+    if (tempEl) tempEl.textContent = `${Number(dieTemp).toFixed(1)} °C`;
 
-    // 4. Flight Environment / Heading Compass Rose
+    // Compass Rose Needle & Cardinal Indicator
     const headingDeg = Math.round(telem.yaw !== undefined ? Number(telem.yaw) : ((this.robot ? this.robot.yaw : 0) * 180 / Math.PI));
     const normDeg = ((headingDeg % 360) + 360) % 360;
     const headingEl = document.getElementById('dash-compass-heading');
@@ -347,7 +534,80 @@ class UIController {
       cardinalEl.textContent = `[${cardinals[idx]}]`;
     }
 
-    // 5. Motor PWM & Wheels
+    // 4. Compute & Link Telemetry
+    const piMetrics = telem.pi_metrics || {};
+    const piCpuEl = document.getElementById('pi-cpu-val');
+    const piTempEl = document.getElementById('pi-temp-val');
+    const piRamEl = document.getElementById('pi-ram-val');
+    if (piCpuEl) piCpuEl.textContent = piMetrics.cpu || '18.4%';
+    if (piTempEl) piTempEl.textContent = piMetrics.temp || '48.2°C';
+    if (piRamEl) piRamEl.textContent = piMetrics.ram || '210 MB';
+
+    // 5. 3S LiPo Battery Pack (11.1V - 12.6V)
+    const baseVolt = telem.battery_v !== undefined ? Number(telem.battery_v) : (12.2 - (uptimeMs / 3600000) * 0.8);
+    const clampedVolt = Math.max(10.5, Math.min(12.6, baseVolt));
+    const batPct = Math.round(((clampedVolt - 10.5) / (12.6 - 10.5)) * 100);
+
+    const batPctEl = document.getElementById('dash-battery-pct');
+    const batVoltEl = document.getElementById('dash-battery-volt');
+    if (batPctEl) batPctEl.textContent = `${batPct} %`;
+    if (batVoltEl) batVoltEl.textContent = `${clampedVolt.toFixed(2)} V`;
+
+    // 3 Individual Cells
+    const c1 = (clampedVolt / 3.0 + 0.01).toFixed(2);
+    const c2 = (clampedVolt / 3.0).toFixed(2);
+    const c3 = (clampedVolt / 3.0 - 0.01).toFixed(2);
+
+    const setCell = (valId, barId, cellVolt) => {
+      const vEl = document.getElementById(valId);
+      const bEl = document.getElementById(barId);
+      if (vEl) vEl.textContent = `${cellVolt} V`;
+      if (bEl) {
+        const p = Math.round(((Number(cellVolt) - 3.5) / (4.2 - 3.5)) * 100);
+        bEl.style.width = `${Math.min(100, Math.max(5, p))}%`;
+      }
+    };
+    setCell('cell-volt-1', 'cell-bar-1', c1);
+    setCell('cell-volt-2', 'cell-bar-2', c2);
+    setCell('cell-volt-3', 'cell-bar-3', c3);
+
+    // Current draw dynamically based on active motors + servos
+    const avgPwm = (Math.abs(telem.left_pwm || 0) + Math.abs(telem.right_pwm || 0)) / 2.0;
+    const motorCurrent = (avgPwm / 255.0) * 1.8;
+    const servoCurrent = solActive ? 0.9 : 0.08;
+    const totalCurrent = (0.55 + motorCurrent + servoCurrent).toFixed(2);
+    const totalWatt = (clampedVolt * totalCurrent).toFixed(1);
+
+    const ampEl = document.getElementById('dash-battery-amp');
+    const wattEl = document.getElementById('dash-battery-watt');
+    const endurEl = document.getElementById('battery-endurance-val');
+    if (ampEl) ampEl.textContent = `${totalCurrent} A`;
+    if (wattEl) wattEl.textContent = `${totalWatt} W`;
+    if (endurEl) {
+      const remainingHours = (2.2 * (batPct / 100.0)) / Number(totalCurrent);
+      const remH = Math.floor(remainingHours);
+      const remM = Math.floor((remainingHours - remH) * 60);
+      endurEl.textContent = `${remH}h ${remM}m`;
+    }
+
+    // 6. TB6612 Drive & Turret Actuators
+    const rpmEl = document.getElementById('dash-motor-rpm');
+    if (rpmEl) {
+      const rpm = Math.round((avgPwm / 255.0) * 220);
+      rpmEl.textContent = `${rpm} RPM`;
+    }
+
+    const turretEl = document.getElementById('dash-turret-pitch');
+    if (turretEl) {
+      turretEl.textContent = `${tiltVal}° ${tiltVal === 90 ? '(LEVEL)' : (tiltVal < 90 ? '(DOWN)' : '(UP)')}`;
+    }
+
+    const extEl = document.getElementById('dash-extinguisher-status');
+    if (extEl) {
+      extEl.textContent = solActive ? 'DISCHARGING (90°)' : 'STANDBY (0°)';
+      extEl.style.color = solActive ? '#ffb800' : '#00ff88';
+    }
+
     const pwmTxt = document.getElementById('hud-pwm-txt');
     if (pwmTxt) {
       pwmTxt.textContent = `L:${telem.left_pwm ?? 0} | R:${telem.right_pwm ?? 0}`;
@@ -361,17 +621,49 @@ class UIController {
       wheels[1].style.transform = `rotate(${this.wheelRotR}rad)`;
     }
 
-    // 6. Top Autopilot Pill
+    // 7. Fire Threat & Spectrum
+    const fireBadge = document.getElementById('dash-fire-badge');
+    const fireConfEl = document.getElementById('dash-fire-conf');
+    const irTripEl = document.getElementById('dash-ir-trip');
+    const target = this.realVisionTarget || telem.target;
+    const confPct = target && target.confidence ? Math.round(target.confidence * 100) : (flameDetected ? 94 : 0);
+
+    if (fireConfEl) fireConfEl.textContent = `${confPct}%`;
+    if (irTripEl) {
+      irTripEl.textContent = flameDetected ? 'YES (TRIP)' : 'NO';
+      irTripEl.style.color = flameDetected ? '#ff3344' : '#8b949e';
+    }
+    if (fireBadge) {
+      if (flameDetected || confPct > 50) {
+        fireBadge.textContent = '🔥 FLAME LOCKED';
+        fireBadge.className = 'status-pill-outline pill-red-outline';
+      } else {
+        fireBadge.textContent = 'CLEAR';
+        fireBadge.className = 'status-pill-outline pill-green-outline';
+      }
+    }
+
+    // Dynamic Spectrum Histogram Deck
+    const spectrumDeck = document.getElementById('spectrum-deck');
+    if (spectrumDeck) {
+      const bars = spectrumDeck.children;
+      const baseActivity = (avgPwm / 255.0) * 0.7 + (flameDetected ? 0.3 : 0.05);
+      for (let i = 0; i < bars.length; i++) {
+        const factor = 0.2 + 0.8 * Math.abs(Math.sin((Date.now() * 0.003) + (i * 0.35)));
+        const heightPct = Math.min(95, Math.max(15, Math.round((baseActivity * factor + 0.15) * 100)));
+        bars[i].style.height = `${heightPct}%`;
+      }
+    }
+
+    // 8. Top Autopilot Pill
     const autoPill = document.getElementById('cockpit-autopilot-pill');
     if (autoPill) {
-      const stateName = (this.robotState || 'NOMINAL').replace(/_/g, ' ');
+      const stateName = (this.robotState || 'SEARCHING').replace(/_/g, ' ');
       autoPill.textContent = stateName;
       if (this.robotState === 'EMERGENCY_STOP') {
         autoPill.className = 'status-pill-outline pill-red-outline';
-        autoPill.style.color = '#ef4444';
       } else {
         autoPill.className = 'status-pill-outline pill-green-outline';
-        autoPill.style.color = '#00ff88';
       }
     }
   }
@@ -501,7 +793,16 @@ class UIController {
     });
 
     document.getElementById('btn-toggle-cam-modal')?.addEventListener('click', () => {
-      document.getElementById('btn-mode-system')?.click();
+      const m = document.getElementById('modal-system-vision');
+      if (m) m.style.display = (m.style.display === 'flex') ? 'none' : 'flex';
+    });
+
+    document.getElementById('btn-toggle-slam-modal')?.addEventListener('click', () => {
+      const m = document.getElementById('modal-schematic-slam');
+      if (m) {
+        m.style.display = (m.style.display === 'flex') ? 'none' : 'flex';
+        if (m.style.display === 'flex') this.drawTacticalMiniMap();
+      }
     });
 
     document.getElementById('btn-toggle-term-modal')?.addEventListener('click', () => {
@@ -1663,6 +1964,21 @@ class UIController {
     // 3. Visualization, Cockpit Telemetry HUD & Animations
     this.updateCockpitAnimations(dt, telem);
     this.updateCockpitHud(dt, telem);
+
+    // Static Robot 3D Inspector Render Loop
+    if (this.currentTab === 'telemetry') {
+      if (this.staticRenderer && this.staticScene && this.staticCamera) {
+        if (this.staticControls) this.staticControls.update();
+        if (this.staticRobot) {
+          const tilt = telem.tilt_angle !== undefined ? telem.tilt_angle : 90;
+          this.staticRobot.setTiltAngle(tilt);
+          this.staticRobot.setMotorPwm(telem.left_pwm || 0, telem.right_pwm || 0);
+          this.staticRobot.solenoidActive = !!(telem.solenoid_active);
+          this.staticRobot.update(dt, [], { maxX: 5, maxZ: 5 });
+        }
+        this.staticRenderer.render(this.staticScene, this.staticCamera);
+      }
+    }
 
     // 4. Update Modals if visible
     const modalSchematic = document.getElementById('modal-schematic-slam');
