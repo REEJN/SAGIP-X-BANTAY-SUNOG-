@@ -229,6 +229,51 @@ class UIController {
     }
   }
 
+  updateStaticInspection(dt, telem) {
+    if (!this.staticRobot) return;
+
+    // 1. Smooth, gentle turntable auto-rotation
+    if (this.staticAutoRotate) {
+      this.staticRobot.yaw = (this.staticRobot.yaw || 0) + (dt * 0.12);
+      this.staticRobot.root.rotation.y = this.staticRobot.yaw;
+    }
+
+    // 2. Articulated Tilt Gimbal (smoothly match target tilt from telemetry)
+    const targetTilt = telem ? (telem.tilt_angle !== undefined ? telem.tilt_angle : 90) : 90;
+    this.staticRobot.currentTiltDeg = (this.staticRobot.currentTiltDeg || 90) + (targetTilt - (this.staticRobot.currentTiltDeg || 90)) * Math.min(1.0, dt * 6.0);
+    if (this.staticRobot.tiltGimbal) {
+      this.staticRobot.tiltGimbal.rotation.x = (this.staticRobot.currentTiltDeg - 90.0) * (Math.PI / 180.0);
+    }
+
+    // 3. Wheel Spin Animations
+    if (telem) {
+      const avgPwm = (Math.abs(telem.left_pwm || 0) + Math.abs(telem.right_pwm || 0)) / 2.0;
+      const spinSpeed = (avgPwm / 255.0) * 12.0 * dt;
+      if (this.staticRobot.wheels) {
+        this.staticRobot.wheels.forEach(w => {
+          w.angle = (w.angle || 0) + ((telem.left_pwm >= 0 ? 1 : -1) * spinSpeed);
+          w.group.rotation.x = w.angle;
+        });
+      }
+    }
+
+    // 4. Amber Beacon Dome Alert Pulse
+    if (this.staticRobot.beaconMat) {
+      const isAlert = !!(telem && (telem.flame_detected || telem.solenoid_active));
+      const pulseSpeed = isAlert ? 12.0 : 3.5;
+      const intensity = 0.35 + 0.65 * (0.5 + 0.5 * Math.sin(Date.now() * 0.001 * pulseSpeed));
+      this.staticRobot.beaconMat.emissiveIntensity = intensity;
+    }
+
+    // 5. Spotlight Ring decay
+    if (this.staticRobot.spotlightRing && this.staticRobot.spotlightAnim > 0) {
+      this.staticRobot.spotlightAnim = Math.max(0, this.staticRobot.spotlightAnim - (dt * 0.5));
+      this.staticRobot.spotlightRing.material.opacity = this.staticRobot.spotlightAnim;
+      const s = 1.0 + (1.0 - this.staticRobot.spotlightAnim) * 0.5;
+      this.staticRobot.spotlightRing.scale.set(s, s, s);
+    }
+  }
+
   initTabNavigation() {
     this.currentTab = 'telemetry';
 
@@ -315,6 +360,14 @@ class UIController {
     this.staticRobot.position.set(0, 0, 0);
     this.staticRobot.yaw = Math.PI * 0.35;
     this.staticRobot.root.rotation.y = this.staticRobot.yaw;
+    this.staticAutoRotate = true;
+
+    // Auto-Rotate Button
+    document.getElementById('btn-toggle-autorotate')?.addEventListener('click', () => {
+      this.staticAutoRotate = !this.staticAutoRotate;
+      const btn = document.getElementById('btn-toggle-autorotate');
+      if (btn) btn.classList.toggle('active', this.staticAutoRotate);
+    });
 
     // Render Mode Switchers
     document.getElementById('btn-render-solid')?.addEventListener('click', () => {
@@ -664,6 +717,39 @@ class UIController {
         autoPill.className = 'status-pill-outline pill-red-outline';
       } else {
         autoPill.className = 'status-pill-outline pill-green-outline';
+      }
+    }
+
+    // 9. Expanded Cards: Motor Direction, Turret Arc Bar, Mission Log
+    const dirEl = document.getElementById('dash-motor-dir');
+    if (dirEl) {
+      const lp = telem.left_pwm || 0;
+      const rp = telem.right_pwm || 0;
+      if (lp === 0 && rp === 0) dirEl.textContent = 'STOPPED';
+      else if (lp > 0 && rp > 0) dirEl.textContent = 'FORWARD';
+      else if (lp < 0 && rp < 0) dirEl.textContent = 'REVERSE';
+      else if (lp > rp) dirEl.textContent = 'PIVOT RIGHT';
+      else dirEl.textContent = 'PIVOT LEFT';
+    }
+
+    const tBar = document.getElementById('dash-turret-bar');
+    if (tBar) {
+      const tiltClamped = Math.max(45, Math.min(135, tiltVal));
+      const pct = Math.round(((tiltClamped - 45) / 90.0) * 100);
+      tBar.style.width = `${pct}%`;
+    }
+
+    // Append state transition to mission log
+    if (this.lastLoggedState !== this.robotState) {
+      this.lastLoggedState = this.robotState;
+      const logBox = document.getElementById('dock-mission-log');
+      if (logBox) {
+        const timeStr = new Date().toTimeString().slice(0, 8);
+        const entry = document.createElement('div');
+        entry.innerHTML = `<span style="color:#00ff88;">[${timeStr}]</span> FSM -> <b style="color:#00f0ff;">${this.robotState}</b>`;
+        logBox.appendChild(entry);
+        if (logBox.children.length > 25) logBox.removeChild(logBox.children[0]);
+        logBox.scrollTop = logBox.scrollHeight;
       }
     }
   }
@@ -1970,11 +2056,7 @@ class UIController {
       if (this.staticRenderer && this.staticScene && this.staticCamera) {
         if (this.staticControls) this.staticControls.update();
         if (this.staticRobot) {
-          const tilt = telem.tilt_angle !== undefined ? telem.tilt_angle : 90;
-          this.staticRobot.setTiltAngle(tilt);
-          this.staticRobot.setMotorPwm(telem.left_pwm || 0, telem.right_pwm || 0);
-          this.staticRobot.solenoidActive = !!(telem.solenoid_active);
-          this.staticRobot.update(dt, [], { maxX: 5, maxZ: 5 });
+          this.updateStaticInspection(dt, telem);
         }
         this.staticRenderer.render(this.staticScene, this.staticCamera);
       }

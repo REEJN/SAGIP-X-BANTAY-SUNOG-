@@ -98,6 +98,7 @@
               <button id="btn-render-solid" class="inspector-btn active" title="Realistic Full Color 3D Mesh">🔷 SOLID</button>
               <button id="btn-render-hologram" class="inspector-btn hologram-btn" title="Tactical Glowing X-Ray Wireframe">🌐 X-RAY HOLOGRAM</button>
               <button id="btn-render-labels" class="inspector-btn" title="Toggle 3D Floating Sensor Component Badges">🏷️ 3D LABELS</button>
+              <button id="btn-toggle-autorotate" class="inspector-btn active" title="Toggle Slow Turntable Auto-Rotation">🔄 AUTO-ROTATE</button>
             </div>
 
             <div style="width: 1px; height: 16px; background: rgba(255, 255, 255, 0.15);"></div>
@@ -358,63 +359,63 @@
           </div>
         </main>
 
-        <!-- D. BOTTOM FLOATING DOCK -->
+        <!-- D. BOTTOM FLOATING DOCK: 6 EXPANDED USEFUL HARDWARE CARDS -->
         <footer class="cockpit-bottom-dock">
 
-          <!-- Card 5: 3S LiPo Power Module -->
-          <div class="glass-panel cockpit-interactive battery-module-card">
-            <div>
-              <div style="display: flex; align-items: baseline; gap: 8px;">
-                <div id="dash-battery-pct" class="battery-level-huge">84.2 %</div>
-                <div id="dash-battery-volt" style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 16px; color: #00ff88;">11.8 V</div>
+          <!-- Card 1: 3S LiPo Power Module & Cell Balancer -->
+          <div class="glass-panel cockpit-interactive battery-module-card" id="card-lipo-module">
+            <div style="min-width: 140px;">
+              <div style="display: flex; align-items: baseline; gap: 6px;">
+                <div id="dash-battery-pct" class="battery-level-huge">81 %</div>
+                <div id="dash-battery-volt" style="font-family: var(--font-mono, monospace); font-weight: 800; font-size: 15px; color: #00ff88;">12.20 V</div>
               </div>
-              <div class="card-sec-sub" style="margin-bottom: 6px;">3S LiPo BATTERY PACK (2200 mAh)</div>
+              <div class="card-sec-sub" style="margin-bottom: 4px;">3S LiPo BATTERY PACK (2200 mAh)</div>
 
               <div class="lipo-cells-deck">
                 <div class="lipo-cell-box">
                   <span class="lipo-cell-label">CELL 1</span>
-                  <span id="cell-volt-1" class="lipo-cell-val">3.93 V</span>
-                  <div class="lipo-cell-bar"><div id="cell-bar-1" class="lipo-cell-fill" style="width: 84%;"></div></div>
+                  <span id="cell-volt-1" class="lipo-cell-val">4.07 V</span>
+                  <div class="lipo-cell-bar"><div id="cell-bar-1" class="lipo-cell-fill" style="width: 82%;"></div></div>
                 </div>
                 <div class="lipo-cell-box">
                   <span class="lipo-cell-label">CELL 2</span>
-                  <span id="cell-volt-2" class="lipo-cell-val">3.94 V</span>
-                  <div class="lipo-cell-bar"><div id="cell-bar-2" class="lipo-cell-fill" style="width: 85%;"></div></div>
+                  <span id="cell-volt-2" class="lipo-cell-val">4.06 V</span>
+                  <div class="lipo-cell-bar"><div id="cell-bar-2" class="lipo-cell-fill" style="width: 81%;"></div></div>
                 </div>
                 <div class="lipo-cell-box">
                   <span class="lipo-cell-label">CELL 3</span>
-                  <span id="cell-volt-3" class="lipo-cell-val">3.93 V</span>
-                  <div class="lipo-cell-bar"><div id="cell-bar-3" class="lipo-cell-fill" style="width: 84%;"></div></div>
+                  <span id="cell-volt-3" class="lipo-cell-val">4.05 V</span>
+                  <div class="lipo-cell-bar"><div id="cell-bar-3" class="lipo-cell-fill" style="width: 80%;"></div></div>
                 </div>
               </div>
             </div>
 
-            <!-- Isometric Battery Graphic -->
-            <div class="battery-iso-view">
-              <div class="iso-cell-stack">
-                <div class="iso-cell-layer"></div>
-                <div class="iso-cell-layer"></div>
-                <div class="iso-cell-layer"></div>
-              </div>
-              <div style="position: absolute; bottom: 2px; font-size: 8px; font-family: var(--font-mono, monospace); color: #6e7681; letter-spacing: 1px;">3S 11.1V // LiPo</div>
-            </div>
-
             <!-- Endurance & Power Stats -->
-            <div class="battery-endurance-sub">
-              <div>EST. ENDURANCE: <span id="battery-endurance-val" class="endurance-time-huge">1h 48m</span></div>
-              <canvas id="battery-sparkline-canvas" width="120" height="18" style="display:block; margin: 2px 0;"></canvas>
-              <div style="display: flex; justify-content: space-between;"><span>LOAD CURRENT:</span> <b id="dash-battery-amp" style="color:#e6edf3;">1.25 A</b></div>
-              <div style="display: flex; justify-content: space-between;"><span>POWER DRAW:</span> <b id="dash-battery-watt" style="color:#e6edf3;">14.7 W</b></div>
-              <div style="display: flex; justify-content: space-between;"><span>BATTERY STATUS:</span> <b style="color:#00ff88;">NOMINAL</b></div>
+            <div class="battery-endurance-sub" style="margin-left: 6px;">
+              <div style="display: flex; justify-content: space-between; align-items: baseline;">
+                <span style="font-size: 9px; color: #8b949e; font-family: var(--font-mono, monospace);">ENDURANCE:</span>
+                <span id="battery-endurance-val" class="endurance-time-huge" style="font-size: 14px;">1h 42m</span>
+              </div>
+              <canvas id="battery-sparkline-canvas" width="100" height="14" style="display:block; margin: 2px 0;"></canvas>
+              <div style="display: flex; justify-content: space-between; font-size: 9px; font-family: var(--font-mono, monospace);">
+                <span>LOAD:</span> <b id="dash-battery-amp" style="color:#00f0ff;">1.25 A</b>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 9px; font-family: var(--font-mono, monospace);">
+                <span>POWER:</span> <b id="dash-battery-watt" style="color:#00ff88;">15.2 W</b>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-size: 9px; font-family: var(--font-mono, monospace);">
+                <span>HEALTH:</span> <b style="color:#00ff88;">98% NOMINAL</b>
+              </div>
             </div>
           </div>
 
-          <!-- Card 6: TB6612FNG Drive & Turret Actuators -->
-          <div class="glass-panel cockpit-interactive motor-overview-card">
-            <div>
-              <div class="card-sec-title">⚙️ ACTUATOR DRIVE MATRIX</div>
-              <div class="card-sec-sub">TB6612 4WD & MG90S/MG996R SERVOS</div>
+          <!-- Card 2: TB6612FNG 4WD Locomotion Matrix -->
+          <div class="glass-panel cockpit-interactive motor-overview-card" id="card-motor-matrix">
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <div class="card-sec-title">⚙️ 4WD DRIVE</div>
+              <b id="dash-motor-dir" style="font-family: var(--font-mono, monospace); font-size: 9px; color: #00ff88;">FORWARD</b>
             </div>
+            <div class="card-sec-sub">TB6612 DUAL H-BRIDGE</div>
 
             <div class="motor-twin-wheels">
               <div class="wheel-drive-disc" title="Left Motor Pair"><div class="wheel-drive-center"></div></div>
@@ -422,35 +423,54 @@
             </div>
 
             <div>
-              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 11px;">
-                <span style="color:#8b949e;">SPEED / RPM:</span> <b id="dash-motor-rpm" style="color:#00ff88;">140 RPM</b>
-              </div>
-              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 11px;">
-                <span style="color:#8b949e;">TURRET TILT:</span> <b id="dash-turret-pitch" style="color:#00f0ff;">90° (LEVEL)</b>
-              </div>
-              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 10px; margin-top:2px;">
-                <span style="color:#6e7681;">PWM (L/R):</span> <b id="hud-pwm-txt" style="color:var(--accent-cyan);">L:0 | R:0</b>
+              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 10px;">
+                <span style="color:#8b949e;">SPEED:</span> <b id="dash-motor-rpm" style="color:#00ff88;">140 RPM</b>
               </div>
               <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 10px;">
-                <span style="color:#6e7681;">EXTINGUISHER:</span> <b id="dash-extinguisher-status" style="color:#00ff88;">STANDBY (0°)</b>
+                <span style="color:#6e7681;">PWM (L/R):</span> <b id="hud-pwm-txt" style="color:var(--accent-cyan);">L:0 | R:0</b>
               </div>
             </div>
           </div>
 
-          <!-- Card 7: Fire Threat & Sensor Spectrum -->
-          <div class="glass-panel cockpit-interactive engine-status-card">
-            <div class="engine-header-row">
-              <div style="display: flex; align-items: center; gap: 8px;">
-                <span class="card-sec-title">🔥 FIRE THREAT & SPECTRUM</span>
-                <span id="dash-fire-badge" class="status-pill-outline pill-green-outline" style="padding: 2px 6px; font-size: 9px;">CLEAR</span>
+          <!-- Card 3: Suppression Actuator & Turret Gimbal -->
+          <div class="glass-panel cockpit-interactive" id="card-turret-suppression">
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <div class="card-sec-title">💧 SUPPRESSION</div>
+              <span id="dash-extinguisher-status" class="status-pill-outline pill-green-outline" style="padding: 1px 6px; font-size: 8px;">STANDBY 0°</span>
+            </div>
+            <div class="card-sec-sub">MG90S TILT & MG996R VALVE</div>
+
+            <div style="display: flex; flex-direction: column; gap: 4px; margin-top: 4px;">
+              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 10px;">
+                <span style="color:#8b949e;">TURRET TILT:</span> <b id="dash-turret-pitch" style="color:#00f0ff;">90° (LEVEL)</b>
               </div>
-              <div style="font-family: var(--font-mono, monospace); font-size: 10px; color:#8b949e;">
-                AI CONF: <b id="dash-fire-conf" style="color:#00ff88; font-size: 12px;">0%</b> | IR TRIP: <b id="dash-ir-trip" style="color:#8b949e;">NO</b>
+              <div style="width: 100%; height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px; position: relative; overflow: hidden;">
+                <div id="dash-turret-bar" style="position: absolute; left: 0; top: 0; bottom: 0; width: 50%; background: #00f0ff; border-radius: 2px;"></div>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 8px; color:#6e7681;">
+                <span>45° (DOWN)</span>
+                <span>90° LEVEL</span>
+                <span>135° (UP)</span>
+              </div>
+              <div style="display: flex; justify-content: space-between; font-family: var(--font-mono, monospace); font-size: 9px; margin-top: 2px;">
+                <span style="color:#8b949e;">WATCHDOG:</span> <b style="color:#ffb800;">3000 ms MAX</b>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card 4: Fire Threat & Sensor Spectrum -->
+          <div class="glass-panel cockpit-interactive engine-status-card" id="card-threat-spectrum">
+            <div class="engine-header-row">
+              <div style="display: flex; align-items: center; gap: 6px;">
+                <span class="card-sec-title" style="font-size: 12px;">🔥 THREAT & SPECTRUM</span>
+                <span id="dash-fire-badge" class="status-pill-outline pill-green-outline" style="padding: 1px 5px; font-size: 8px;">CLEAR</span>
+              </div>
+              <div style="font-family: var(--font-mono, monospace); font-size: 9px; color:#8b949e;">
+                AI: <b id="dash-fire-conf" style="color:#00ff88;">0%</b> | IR: <b id="dash-ir-trip">NO</b>
               </div>
             </div>
 
-            <div class="spectrum-histogram-deck" id="spectrum-deck">
-              <!-- 24 spectrum histogram bars generated dynamically -->
+            <div class="spectrum-histogram-deck" id="spectrum-deck" style="height: 38px; margin-top: 4px;">
               <div class="spectrum-bar" style="height: 25%;"></div>
               <div class="spectrum-bar" style="height: 35%;"></div>
               <div class="spectrum-bar" style="height: 45%;"></div>
@@ -467,19 +487,38 @@
               <div class="spectrum-bar" style="height: 45%;"></div>
               <div class="spectrum-bar" style="height: 35%;"></div>
               <div class="spectrum-bar" style="height: 30%;"></div>
-              <div class="spectrum-bar" style="height: 25%;"></div>
-              <div class="spectrum-bar" style="height: 40%;"></div>
-              <div class="spectrum-bar" style="height: 50%;"></div>
-              <div class="spectrum-bar warm-yellow" style="height: 60%;"></div>
-              <div class="spectrum-bar" style="height: 45%;"></div>
-              <div class="spectrum-bar" style="height: 35%;"></div>
-              <div class="spectrum-bar" style="height: 25%;"></div>
-              <div class="spectrum-bar" style="height: 20%;"></div>
+            </div>
+          </div>
+
+          <!-- Card 5: Real-Time Mission Event & Subsystem Audit Log -->
+          <div class="glass-panel cockpit-interactive" id="card-mission-log" style="display: flex; flex-direction: column;">
+            <div style="display: flex; justify-content: space-between; align-items: baseline;">
+              <div class="card-sec-title" style="font-size: 12px;">📋 MISSION LOG</div>
+              <span style="font-family: var(--font-mono, monospace); font-size: 8px; color: #00ff88;">● LIVE</span>
+            </div>
+            <div class="card-sec-sub" style="margin-bottom: 4px;">EVENT TIMELINE</div>
+            <div id="dock-mission-log" style="flex: 1; height: 58px; overflow-y: auto; background: rgba(5,9,14,0.85); border: 1px solid rgba(255,255,255,0.06); border-radius: 4px; padding: 4px 6px; font-family: var(--font-mono, monospace); font-size: 9px; line-height: 1.35; color: #8b949e;">
+              <div><span style="color:#6e7681;">[BOOT]</span> SAGIP-X Digital Twin Online</div>
+              <div><span style="color:#00ff88;">[INFO]</span> MPU-6050 & HC-SR04 Active</div>
+              <div><span style="color:#00f0ff;">[FSM]</span> System State: SEARCHING</div>
+            </div>
+          </div>
+
+          <!-- Card 6: Direct Actuator Bench & Teleop Controls -->
+          <div class="glass-panel cockpit-interactive" id="card-quick-actuators">
+            <div class="card-sec-title" style="font-size: 12px;">🛠️ BENCH CONTROLS</div>
+            <div class="card-sec-sub" style="margin-bottom: 4px;">QUICK TRIGGERS</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 4px;">
+              <button class="bench-btn warning" data-cmd="f" style="padding: 3px 6px; font-size: 9px;">💧 Spray 1s</button>
+              <button class="bench-btn info" data-cmd="h" style="padding: 3px 6px; font-size: 9px;">⏹ Level 90°</button>
+              <button class="bench-btn" data-cmd="u" style="padding: 3px 6px; font-size: 9px;">⬆ Tilt +10°</button>
+              <button class="bench-btn" data-cmd="j" style="padding: 3px 6px; font-size: 9px;">⬇ Tilt -10°</button>
+              <button class="bench-btn" data-cmd="sweep" style="padding: 3px 6px; font-size: 9px;">🔄 Sweep</button>
+              <button class="bench-btn danger" data-cmd="x" style="padding: 3px 6px; font-size: 9px;">🛑 E-Stop</button>
             </div>
           </div>
 
         </footer>
-
       </div>
     </section>
 

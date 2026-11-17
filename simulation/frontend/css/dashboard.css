@@ -2563,17 +2563,33 @@ html, body {
   bottom: 0;
   width: 100%;
   height: calc(100vh - 54px);
-  z-index: 10;
+  overflow-y: auto;
+  overflow-x: hidden;
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 10px 18px 12px 18px;
+  padding: 8px 16px 10px 16px;
   box-sizing: border-box;
   pointer-events: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color: #c9d1d9;
   background: radial-gradient(circle at 50% 50%, rgba(13, 20, 28, 0.1) 0%, rgba(8, 12, 18, 0.75) 100%);
   user-select: none;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 240, 255, 0.3) rgba(5, 9, 14, 0.8);
+}
+
+.defense-cockpit-viewport::-webkit-scrollbar {
+  width: 6px;
+}
+
+.defense-cockpit-viewport::-webkit-scrollbar-track {
+  background: rgba(5, 9, 14, 0.8);
+}
+
+.defense-cockpit-viewport::-webkit-scrollbar-thumb {
+  background: rgba(0, 240, 255, 0.3);
+  border-radius: 3px;
 }
 
 /* Interactive elements in HUD */
@@ -3177,20 +3193,70 @@ html, body {
    -------------------------------------------------------------------------- */
 .cockpit-bottom-dock {
   width: 100%;
-  height: 125px;
+  min-height: 125px;
   display: grid;
-  grid-template-columns: 400px 200px 1fr;
+  grid-template-columns: 285px 170px 170px 185px minmax(200px, 1fr) 180px;
   gap: 8px;
   align-items: stretch;
-  pointer-events: none;
+  pointer-events: auto;
+  margin-top: auto;
+  padding-bottom: 4px;
+  position: relative;
+  z-index: 10;
+}
+
+@media (max-width: 1480px) {
+  .cockpit-bottom-dock {
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  }
+}
+
+@media (max-height: 800px) {
+  .static-robot-viewport {
+  position: absolute;
+  top: 6px;
+  left: 305px;
+  right: 305px;
+  bottom: 155px;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  z-index: 5;
+}
+  .cockpit-main-layout {
+    margin-top: 2px !important;
+    margin-bottom: 4px !important;
+  }
+  .glass-panel {
+    padding: 6px 10px !important;
+  }
+  .sonar-gauges-container {
+    gap: 3px !important;
+  }
+  .imu-matrix-grid {
+    gap: 3px !important;
+    margin: 3px 0 !important;
+  }
+}
+
+@media (max-height: 720px) {
+  .static-robot-viewport {
+    bottom: 130px !important;
+  }
+  .card-sec-title {
+    font-size: 11px !important;
+  }
+  .battery-level-huge {
+    font-size: 22px !important;
+  }
 }
 
 /* Battery Module Card */
 .battery-module-card {
-  display: grid;
-  grid-template-columns: 140px 140px 1fr;
-  gap: 14px;
-  align-items: center;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .battery-level-huge {
@@ -3252,10 +3318,13 @@ html, body {
 .battery-endurance-sub {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  justify-content: space-between;
   font-family: var(--font-mono, monospace);
   font-size: 9px;
   color: #8b949e;
+  min-width: 118px;
+  padding-left: 6px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 .endurance-time-huge {
@@ -3449,7 +3518,7 @@ html, body {
   top: 6px;
   left: 305px;
   right: 305px;
-  bottom: 135px;
+  bottom: 155px;
   display: flex;
   flex-direction: column;
   pointer-events: auto;
