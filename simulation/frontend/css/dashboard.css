@@ -2549,3 +2549,818 @@ html, body {
   color: #ff3344;
   font-weight: 700;
 }
+
+/* ==========================================================================
+   AEROSPACE DEFENSE TELEMETRY COCKPIT (1:1 Layout from Reference Image)
+   ========================================================================== */
+
+/* Fullscreen Cockpit Container */
+.defense-cockpit-viewport {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px 24px 20px 24px;
+  box-sizing: border-box;
+  pointer-events: none;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  color: #c9d1d9;
+  background: radial-gradient(circle at 50% 50%, rgba(13, 20, 28, 0.1) 0%, rgba(8, 12, 18, 0.75) 100%);
+  user-select: none;
+}
+
+/* Interactive elements in HUD */
+.cockpit-interactive {
+  pointer-events: auto;
+}
+
+/* Glassmorphism Card Style */
+.glass-panel {
+  background: rgba(18, 24, 34, 0.72);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+  padding: 16px 18px;
+  box-sizing: border-box;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.glass-panel:hover {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* --------------------------------------------------------------------------
+   1. TOP NAVIGATION / STATUS HEADER
+   -------------------------------------------------------------------------- */
+.cockpit-top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.cockpit-brand-group {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.cockpit-logo-badge {
+  font-family: "Rajdhani", "Segoe UI", sans-serif;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  color: #fff;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cockpit-logo-badge span {
+  color: #00ff88;
+}
+
+.cockpit-menu-btn {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #8b949e;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cockpit-menu-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+/* Header Info Pills */
+.cockpit-header-items {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+
+.header-metric-block {
+  display: flex;
+  flex-direction: column;
+}
+
+.header-metric-label {
+  font-size: 9px;
+  font-family: var(--font-mono, monospace);
+  color: #6e7681;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+}
+
+.header-metric-val {
+  font-size: 13px;
+  font-family: var(--font-mono, monospace);
+  font-weight: 700;
+  color: #e6edf3;
+  letter-spacing: 0.5px;
+}
+
+/* Waveform visualizer container */
+.waveform-pill-box {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(0, 255, 136, 0.05);
+  border: 1px solid rgba(0, 255, 136, 0.2);
+  border-radius: 8px;
+  padding: 4px 10px;
+}
+
+.waveform-canvas {
+  width: 90px;
+  height: 24px;
+}
+
+/* Status Badges */
+.status-pill-outline {
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 5px 10px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pill-green-outline {
+  background: rgba(0, 255, 136, 0.08);
+  border: 1px solid rgba(0, 255, 136, 0.35);
+  color: #00ff88;
+}
+
+.pill-amber-outline {
+  background: rgba(255, 184, 0, 0.08);
+  border: 1px solid rgba(255, 184, 0, 0.35);
+  color: #ffb800;
+}
+
+.pill-red-outline {
+  background: rgba(255, 51, 68, 0.08);
+  border: 1px solid rgba(255, 51, 68, 0.35);
+  color: #ff3344;
+}
+
+/* Header Right Icon Controls */
+.cockpit-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.icon-tool-btn {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #8b949e;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-size: 14px;
+}
+
+.icon-tool-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.icon-tool-btn.active {
+  background: rgba(0, 240, 255, 0.15);
+  color: #00f0ff;
+  border-color: rgba(0, 240, 255, 0.4);
+}
+
+/* --------------------------------------------------------------------------
+   2. CENTER TOP MODE SWITCHER
+   -------------------------------------------------------------------------- */
+.cockpit-center-mode-bar {
+  position: absolute;
+  top: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  z-index: 15;
+}
+
+.center-callsign-tag {
+  display: flex;
+  flex-direction: column;
+  text-align: right;
+}
+
+.callsign-main {
+  font-family: var(--font-mono, monospace);
+  font-size: 13px;
+  font-weight: 800;
+  color: #00ff88;
+  letter-spacing: 1px;
+}
+
+.callsign-sub {
+  font-size: 9px;
+  color: #6e7681;
+  letter-spacing: 1px;
+}
+
+.mode-switcher-group {
+  display: flex;
+  background: rgba(14, 20, 28, 0.85);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: 3px;
+  gap: 3px;
+}
+
+.mode-switch-btn {
+  background: transparent;
+  border: none;
+  color: #8b949e;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mode-switch-btn:hover {
+  color: #fff;
+}
+
+.mode-switch-btn.active {
+  background: #ea580c; /* Orange active pill matching reference */
+  color: #ffffff;
+  box-shadow: 0 0 14px rgba(234, 88, 12, 0.5);
+}
+
+/* --------------------------------------------------------------------------
+   3. MAIN WORKBENCH GRID (Left & Right floating columns framing center)
+   -------------------------------------------------------------------------- */
+.cockpit-main-layout {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  flex: 1;
+  margin-top: 10px;
+  margin-bottom: 12px;
+  pointer-events: none;
+}
+
+.cockpit-left-col {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  pointer-events: none;
+}
+
+.cockpit-right-col {
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  pointer-events: none;
+}
+
+/* Card Headers & Typography */
+.card-sec-title {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  color: #f0f6fc;
+  margin-bottom: 2px;
+}
+
+.card-sec-sub {
+  font-size: 9px;
+  font-family: var(--font-mono, monospace);
+  color: #6e7681;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+/* Segmented System Readiness Bar */
+.readiness-meter-wrap {
+  margin-bottom: 14px;
+}
+
+.readiness-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: #8b949e;
+  margin-bottom: 6px;
+}
+
+.readiness-score-val {
+  font-size: 16px;
+  font-weight: 800;
+  color: #e6edf3;
+}
+
+.segmented-bar-deck {
+  display: flex;
+  gap: 4px;
+  height: 12px;
+}
+
+.bar-deck-seg {
+  flex: 1;
+  height: 100%;
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 2px;
+  transition: all 0.25s;
+}
+
+.bar-deck-seg.lit-green {
+  background: #00ff88;
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.65);
+}
+
+.bar-deck-seg.lit-amber {
+  background: #ffb800;
+  box-shadow: 0 0 8px rgba(255, 184, 0, 0.6);
+}
+
+/* Checklist items */
+.status-checklist {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.checklist-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+
+.checklist-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #c9d1d9;
+}
+
+.status-dot-sm {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 6px #00ff88;
+}
+
+.status-dot-sm.dot-warn {
+  background: #f59e0b;
+  box-shadow: 0 0 6px #f59e0b;
+}
+
+.checklist-badge {
+  font-weight: 700;
+  font-size: 10px;
+}
+
+.checklist-badge.txt-nominal {
+  color: #00ff88;
+}
+
+.checklist-badge.txt-warn {
+  color: #f59e0b;
+}
+
+/* Payload Status Card */
+.payload-bars-container {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  height: 90px;
+  align-items: flex-end;
+  margin-top: 10px;
+}
+
+.payload-bar-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 100%;
+  justify-content: flex-end;
+}
+
+.payload-bar-track {
+  width: 100%;
+  flex: 1;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+}
+
+.payload-bar-fill {
+  width: 100%;
+  background: linear-gradient(to top, rgba(0, 255, 136, 0.7), rgba(0, 255, 136, 0.2));
+  border-top: 2px solid #00ff88;
+  box-shadow: 0 0 10px rgba(0, 255, 136, 0.4);
+  transition: height 0.3s;
+}
+
+.payload-bar-pct {
+  position: absolute;
+  top: 6px;
+  width: 100%;
+  text-align: center;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  font-weight: 700;
+  color: #00ff88;
+}
+
+.payload-bar-tag {
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  color: #8b949e;
+  margin-top: 6px;
+  text-transform: uppercase;
+}
+
+/* Right: Telemetry Bandwidth Card */
+.bandwidth-graph-box {
+  width: 100%;
+  height: 75px;
+  position: relative;
+  margin: 6px 0;
+}
+
+.bandwidth-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.bandwidth-stats-row {
+  display: flex;
+  justify-content: flex-end;
+  gap: 14px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+  color: #8b949e;
+}
+
+.bandwidth-stats-row b {
+  color: #e6edf3;
+  margin-left: 4px;
+}
+
+/* Right: Link Security 3-tile grid */
+.link-security-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.link-security-tile {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.security-tile-label {
+  font-family: var(--font-mono, monospace);
+  font-size: 8px;
+  color: #6e7681;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.security-tile-val {
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  font-weight: 700;
+  color: #e6edf3;
+}
+
+.security-tile-val.val-green {
+  color: #00ff88;
+}
+
+/* Right: Flight / Operational Environment Card */
+.env-metrics-split {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.env-specs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.env-spec-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font-family: var(--font-mono, monospace);
+  font-size: 10px;
+}
+
+.env-spec-label {
+  color: #8b949e;
+}
+
+.env-spec-val {
+  color: #e6edf3;
+  font-weight: 700;
+}
+
+.env-compass-wrap {
+  width: 72px;
+  height: 72px;
+  position: relative;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: radial-gradient(circle, rgba(0, 255, 136, 0.04) 0%, rgba(5, 10, 16, 0.8) 70%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.env-compass-ticks {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: repeating-conic-gradient(from 0deg, rgba(255, 255, 255, 0.25) 0deg 1deg, transparent 1deg 30deg);
+}
+
+.env-compass-needle {
+  position: absolute;
+  width: 3px;
+  height: 52px;
+  background: linear-gradient(to bottom, #ea580c 50%, rgba(255, 255, 255, 0.2) 50%);
+  border-radius: 2px;
+  transform-origin: center center;
+  transition: transform 0.15s ease-out;
+}
+
+.env-compass-center {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #111a24;
+  border: 1px solid #ea580c;
+  z-index: 2;
+}
+
+/* --------------------------------------------------------------------------
+   4. BOTTOM FLOATING DOCK (Battery Module, Motor Overview, Engine Status)
+   -------------------------------------------------------------------------- */
+.cockpit-bottom-dock {
+  width: 100%;
+  display: grid;
+  grid-template-columns: 460px 180px 1fr;
+  gap: 14px;
+  align-items: stretch;
+  pointer-events: none;
+}
+
+/* Battery Module Card */
+.battery-module-card {
+  display: grid;
+  grid-template-columns: 140px 140px 1fr;
+  gap: 14px;
+  align-items: center;
+}
+
+.battery-level-huge {
+  font-family: var(--font-mono, monospace);
+  font-size: 32px;
+  font-weight: 800;
+  color: #00ff88;
+  line-height: 1.1;
+  letter-spacing: -0.5px;
+}
+
+.battery-metrics-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  margin-top: 8px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  color: #8b949e;
+}
+
+.battery-metrics-grid b {
+  color: #e6edf3;
+  display: block;
+  font-size: 11px;
+}
+
+/* Isometric Battery Illustration */
+.battery-iso-view {
+  position: relative;
+  width: 130px;
+  height: 85px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.iso-cell-stack {
+  position: relative;
+  width: 90px;
+  height: 55px;
+  background: rgba(0, 255, 136, 0.08);
+  border: 1px solid rgba(0, 255, 136, 0.4);
+  border-radius: 8px;
+  box-shadow: 0 0 20px rgba(0, 255, 136, 0.25), inset 0 0 15px rgba(0, 255, 136, 0.15);
+  transform: rotate(-15deg) skewX(20deg);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-evenly;
+  padding: 4px;
+}
+
+.iso-cell-layer {
+  height: 5px;
+  background: rgba(0, 255, 136, 0.45);
+  border-radius: 2px;
+}
+
+.battery-endurance-sub {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-mono, monospace);
+  font-size: 9px;
+  color: #8b949e;
+}
+
+.endurance-time-huge {
+  font-size: 18px;
+  font-weight: 800;
+  color: #00ff88;
+}
+
+/* Electric Motor Overview Card */
+.motor-overview-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.motor-twin-wheels {
+  display: flex;
+  align-items: center;
+  justify-content: space-around;
+  margin: 6px 0;
+}
+
+.wheel-drive-disc {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px dashed rgba(0, 255, 136, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  animation: spinWheel 4s linear infinite;
+}
+
+@keyframes spinWheel {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.wheel-drive-center {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #00ff88;
+  box-shadow: 0 0 8px #00ff88;
+}
+
+/* Engine Status / Spectrum Histogram Card */
+.engine-status-card {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.engine-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.spectrum-histogram-deck {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 55px;
+  width: 100%;
+  margin-top: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.spectrum-bar {
+  flex: 1;
+  background: #00ff88;
+  border-radius: 1px;
+  height: 20%;
+  transition: height 0.15s ease-out;
+}
+
+.spectrum-bar.warm-yellow {
+  background: #ffb800;
+}
+
+.spectrum-bar.hot-red {
+  background: #ff3344;
+  box-shadow: 0 0 8px rgba(255, 51, 68, 0.7);
+}
+
+/* --------------------------------------------------------------------------
+   5. SCHEMATIC & SYSTEM MODAL / OVERLAY PANELS
+   -------------------------------------------------------------------------- */
+.cockpit-modal-overlay {
+  position: absolute;
+  top: 70px;
+  left: 360px;
+  right: 380px;
+  bottom: 170px;
+  background: rgba(10, 16, 24, 0.94);
+  backdrop-filter: blur(24px);
+  border: 1px solid rgba(0, 240, 255, 0.3);
+  border-radius: 12px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.8), 0 0 20px rgba(0, 240, 255, 0.15);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  z-index: 25;
+}
+
+.modal-header-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: rgba(14, 22, 32, 0.9);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.modal-content-stage {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+}
+

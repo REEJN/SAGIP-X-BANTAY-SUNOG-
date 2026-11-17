@@ -83,9 +83,297 @@ class UIController {
     this.bindKeyboard();
     this.initWebSocket();
     this.initCameraStreamControls();
+    this.initCockpitAnimations();
     this.updatePhysicalHardwareStatus(false, null, 115200);
     this.renderPiLogs();
     this.renderEspLogs();
+  }
+
+  initCockpitAnimations() {
+    this.waveformPhase = 0;
+    this.bandwidthPoints = [2.5, 2.7, 3.1, 2.8, 2.4, 2.9, 3.2, 3.0, 3.5, 3.1];
+  }
+
+  updateCockpitAnimations(dt, telem) {
+    // 1. Live UTC Clock
+    const now = new Date();
+    const utcHours = String(now.getUTCHours()).padStart(2, '0');
+    const utcMin = String(now.getUTCMinutes()).padStart(2, '0');
+    const utcSec = String(now.getUTCSeconds()).padStart(2, '0');
+    const utcEl = document.getElementById('cockpit-utc-time');
+    if (utcEl) utcEl.textContent = `${utcHours}:${utcMin}:${utcSec}`;
+
+    // 2. Waveform Visualizer
+    const waveCanvas = document.getElementById('secure-waveform-canvas');
+    if (waveCanvas) {
+      const ctx = waveCanvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, waveCanvas.width, waveCanvas.height);
+        this.waveformPhase = (this.waveformPhase || 0) + (dt * 6);
+        const bars = 18;
+        const barWidth = 3;
+        const gap = 2;
+        ctx.fillStyle = '#00ff88';
+        for (let i = 0; i < bars; i++) {
+          const h = 4 + Math.abs(Math.sin(this.waveformPhase + (i * 0.45))) * 16;
+          ctx.fillRect(i * (barWidth + gap), (waveCanvas.height - h) / 2, barWidth, h);
+        }
+      }
+    }
+
+    // 3. Telemetry Bandwidth Area Graph
+    const bwCanvas = document.getElementById('bandwidth-canvas');
+    if (bwCanvas) {
+      const ctx = bwCanvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, bwCanvas.width, bwCanvas.height);
+        const w = bwCanvas.width;
+        const h = bwCanvas.height;
+
+        this.bwTimer = (this.bwTimer || 0) + dt;
+        if (this.bwTimer >= 0.25) {
+          this.bwTimer = 0;
+          const noise = (Math.random() - 0.48) * 0.4;
+          const nextVal = Math.max(1.2, Math.min(4.5, (this.bandwidthPoints[this.bandwidthPoints.length - 1] || 3.1) + noise));
+          this.bandwidthPoints.push(nextVal);
+          if (this.bandwidthPoints.length > 28) this.bandwidthPoints.shift();
+        }
+
+        const pts = this.bandwidthPoints;
+        const step = w / Math.max(1, pts.length - 1);
+
+        ctx.beginPath();
+        ctx.moveTo(0, h);
+        for (let i = 0; i < pts.length; i++) {
+          const y = h - ((pts[i] / 5.0) * (h - 10));
+          ctx.lineTo(i * step, y);
+        }
+        ctx.lineTo(w, h);
+        ctx.closePath();
+
+        const grad = ctx.createLinearGradient(0, 0, 0, h);
+        grad.addColorStop(0, 'rgba(0, 255, 136, 0.45)');
+        grad.addColorStop(1, 'rgba(0, 255, 136, 0.0)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        ctx.strokeStyle = '#00ff88';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < pts.length; i++) {
+          const y = h - ((pts[i] / 5.0) * (h - 10));
+          if (i === 0) ctx.moveTo(0, y);
+          else ctx.lineTo(i * step, y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    // 4. Battery Sparkline
+    const sparkCanvas = document.getElementById('battery-sparkline-canvas');
+    if (sparkCanvas) {
+      const ctx = sparkCanvas.getContext('2d');
+      if (ctx) {
+        ctx.clearRect(0, 0, sparkCanvas.width, sparkCanvas.height);
+        const w = sparkCanvas.width;
+        const h = sparkCanvas.height;
+        ctx.strokeStyle = '#00ff88';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        const pts = [2, 5, 3, 8, 12, 10, 14, 11, 16];
+        const step = w / (pts.length - 1);
+        for (let i = 0; i < pts.length; i++) {
+          const y = h - (pts[i] / 20) * h;
+          if (i === 0) ctx.moveTo(0, y);
+          else ctx.lineTo(i * step, y);
+        }
+        ctx.stroke();
+      }
+    }
+
+    // 5. Spectrum Histogram Deck
+    const spectrumDeck = document.getElementById('spectrum-deck');
+    if (spectrumDeck) {
+      this.spectrumTimer = (this.spectrumTimer || 0) + dt;
+      if (this.spectrumTimer >= 0.12) {
+        this.spectrumTimer = 0;
+        const bars = spectrumDeck.children;
+        const pwmMag = Math.max(Math.abs(telem?.left_pwm || 0), Math.abs(telem?.right_pwm || 0)) / 255.0;
+        for (let i = 0; i < bars.length; i++) {
+          const base = 25 + Math.sin((i / bars.length) * Math.PI) * 55;
+          const jitter = (Math.random() - 0.5) * 20;
+          const heightPct = Math.max(15, Math.min(95, base * (0.6 + (pwmMag * 0.5)) + jitter));
+          bars[i].style.height = `${heightPct}%`;
+          if (heightPct > 80) {
+            bars[i].className = 'spectrum-bar hot-red';
+          } else if (heightPct > 65) {
+            bars[i].className = 'spectrum-bar warm-yellow';
+          } else {
+            bars[i].className = 'spectrum-bar';
+          }
+        }
+      }
+    }
+
+    // 6. Motor RPM & Power Output calculation
+    const rpmEl = document.getElementById('dash-motor-rpm');
+    const pwrEl = document.getElementById('dash-motor-pwr');
+    if (rpmEl && pwrEl && telem) {
+      const avgPwm = (Math.abs(telem.left_pwm || 0) + Math.abs(telem.right_pwm || 0)) / 2.0;
+      const rpm = Math.round(2800 + (avgPwm / 255.0) * 1200);
+      const kw = (14.0 + (avgPwm / 255.0) * 7.5).toFixed(1);
+      rpmEl.textContent = rpm.toLocaleString();
+      pwrEl.textContent = `${kw} kW`;
+    }
+  }
+
+  updateCockpitHud(dt, telem) {
+    if (!telem) return;
+
+    // 1. Airframe System Readiness
+    const readinessScoreEl = document.getElementById('hud-readiness-score');
+    const segMeter = document.getElementById('segmented-readiness-meter');
+    const isPhysical = !!this.physicalHardwareConnected;
+    const hasImu = isPhysical ? (telem.imu_connected !== false) : true;
+    const hasSensors = (telem.dist_front !== undefined && telem.dist_front > 0);
+
+    let readiness = 95;
+    if (!hasImu) readiness -= 20;
+    if (!hasSensors) readiness -= 15;
+    if (this.robotState === 'EMERGENCY_STOP') readiness = 20;
+
+    if (readinessScoreEl) readinessScoreEl.textContent = `${readiness}%`;
+    if (segMeter) {
+      const segs = segMeter.children;
+      const litCount = Math.round((readiness / 100) * segs.length);
+      for (let i = 0; i < segs.length; i++) {
+        segs[i].className = i < litCount ? 'bar-deck-seg lit-green' : 'bar-deck-seg';
+      }
+    }
+
+    // 2. Checklist items
+    const chkAirframe = document.getElementById('chk-airframe-status');
+    if (chkAirframe) {
+      chkAirframe.textContent = (this.robotState === 'EMERGENCY_STOP') ? 'E-STOP' : 'NOMINAL';
+      chkAirframe.className = `checklist-badge ${this.robotState === 'EMERGENCY_STOP' ? 'txt-warn' : 'txt-nominal'}`;
+    }
+
+    const chkEnv = document.getElementById('chk-env-status');
+    const chkEnvDot = document.getElementById('chk-env-dot');
+    const flameDetected = !!(telem.flame_detected || (this.latestCameraStatus && this.latestCameraStatus.flame_detected));
+    if (chkEnv && chkEnvDot) {
+      if (flameDetected) {
+        chkEnv.textContent = 'FIRE TRIP';
+        chkEnv.className = 'checklist-badge txt-warn';
+        chkEnvDot.className = 'status-dot-sm dot-warn';
+      } else {
+        chkEnv.textContent = 'NOMINAL';
+        chkEnv.className = 'checklist-badge txt-nominal';
+        chkEnvDot.className = 'status-dot-sm';
+      }
+    }
+
+    const chkSensors = document.getElementById('chk-sensors-status');
+    const chkSensorsDot = document.getElementById('chk-sensors-dot');
+    if (chkSensors && chkSensorsDot) {
+      if (hasSensors) {
+        chkSensors.textContent = 'ONLINE';
+        chkSensors.className = 'checklist-badge txt-nominal';
+        chkSensorsDot.className = 'status-dot-sm';
+      } else {
+        chkSensors.textContent = 'OFFLINE';
+        chkSensors.className = 'checklist-badge txt-warn';
+        chkSensorsDot.className = 'status-dot-sm dot-warn';
+      }
+    }
+
+    const chkImu = document.getElementById('dash-imu-status');
+    const chkImuDot = document.getElementById('chk-imu-dot');
+    if (chkImu && chkImuDot) {
+      if (hasImu) {
+        chkImu.textContent = isPhysical ? (telem.imu_calibrated ? 'CALIBRATED' : 'ONLINE') : 'SIMULATED';
+        chkImu.className = 'checklist-badge txt-nominal';
+        chkImuDot.className = 'status-dot-sm';
+      } else {
+        chkImu.textContent = 'OFFLINE';
+        chkImu.className = 'checklist-badge txt-warn';
+        chkImuDot.className = 'status-dot-sm dot-warn';
+      }
+    }
+
+    // 3. Payload status bars
+    const eoPct = flameDetected ? 96 : 78;
+    const lidarPct = Math.min(95, Math.max(30, Math.round(100 - ((telem.dist_front || 150) / 300) * 70)));
+    const commsPct = this.physicalHardwareConnected ? 98 : (this.socket && this.socket.readyState === 1 ? 88 : 20);
+
+    const barEo = document.getElementById('payload-bar-eo');
+    const txtEo = document.getElementById('payload-pct-eo');
+    if (barEo && txtEo) {
+      barEo.style.height = `${eoPct}%`;
+      txtEo.textContent = `${eoPct}%`;
+    }
+
+    const barLidar = document.getElementById('payload-bar-lidar');
+    const txtLidar = document.getElementById('payload-pct-lidar');
+    if (barLidar && txtLidar) {
+      barLidar.style.height = `${lidarPct}%`;
+      txtLidar.textContent = `${lidarPct}%`;
+    }
+
+    const barComms = document.getElementById('payload-bar-comms');
+    const txtComms = document.getElementById('payload-pct-comms');
+    if (barComms && txtComms) {
+      barComms.style.height = `${commsPct}%`;
+      txtComms.textContent = `${commsPct}%`;
+    }
+
+    const overallEl = document.getElementById('payload-overall-pct');
+    if (overallEl) {
+      overallEl.textContent = `${Math.round((eoPct + lidarPct + commsPct) / 3)} %`;
+    }
+
+    // 4. Flight Environment / Heading Compass Rose
+    const headingDeg = Math.round(telem.yaw !== undefined ? Number(telem.yaw) : ((this.robot ? this.robot.yaw : 0) * 180 / Math.PI));
+    const normDeg = ((headingDeg % 360) + 360) % 360;
+    const headingEl = document.getElementById('dash-compass-heading');
+    const cardinalEl = document.getElementById('dash-compass-cardinal');
+    const needleEl = document.getElementById('dash-compass-needle');
+
+    if (headingEl) headingEl.textContent = String(normDeg).padStart(3, '0');
+    if (needleEl) needleEl.style.transform = `translate(-50%, -100%) rotate(${normDeg}deg)`;
+    if (cardinalEl) {
+      const cardinals = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+      const idx = Math.round(normDeg / 45) % 8;
+      cardinalEl.textContent = `[${cardinals[idx]}]`;
+    }
+
+    // 5. Motor PWM & Wheels
+    const pwmTxt = document.getElementById('hud-pwm-txt');
+    if (pwmTxt) {
+      pwmTxt.textContent = `L:${telem.left_pwm ?? 0} | R:${telem.right_pwm ?? 0}`;
+    }
+
+    const wheels = document.querySelectorAll('.wheel-drive-disc');
+    if (wheels.length >= 2) {
+      this.wheelRotL = (this.wheelRotL || 0) + (telem.left_pwm || 0) * dt * 0.08;
+      this.wheelRotR = (this.wheelRotR || 0) + (telem.right_pwm || 0) * dt * 0.08;
+      wheels[0].style.transform = `rotate(${this.wheelRotL}rad)`;
+      wheels[1].style.transform = `rotate(${this.wheelRotR}rad)`;
+    }
+
+    // 6. Top Autopilot Pill
+    const autoPill = document.getElementById('cockpit-autopilot-pill');
+    if (autoPill) {
+      const stateName = (this.robotState || 'NOMINAL').replace(/_/g, ' ');
+      autoPill.textContent = stateName;
+      if (this.robotState === 'EMERGENCY_STOP') {
+        autoPill.className = 'status-pill-outline pill-red-outline';
+        autoPill.style.color = '#ef4444';
+      } else {
+        autoPill.className = 'status-pill-outline pill-green-outline';
+        autoPill.style.color = '#00ff88';
+      }
+    }
   }
 
   initCameraStreamControls() {
@@ -159,17 +447,85 @@ class UIController {
       }
     });
 
+    // Center Top Mode Switcher (3D VIEW, SYSTEM, SCHEMATIC)
+    const modeBtns = document.querySelectorAll('.mode-switch-btn');
+    const modalSchematic = document.getElementById('modal-schematic-slam');
+    const modalSystem = document.getElementById('modal-system-vision');
+    const modalConsole = document.getElementById('modal-engineering-console');
+    const modalBench = document.getElementById('modal-bench-test');
+
+    modeBtns.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        modeBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const mode = btn.dataset.mode;
+
+        if (mode === '3d') {
+          if (modalSchematic) modalSchematic.style.display = 'none';
+          if (modalSystem) modalSystem.style.display = 'none';
+        } else if (mode === 'system') {
+          if (modalSchematic) modalSchematic.style.display = 'none';
+          if (modalSystem) modalSystem.style.display = 'flex';
+        } else if (mode === 'schematic') {
+          if (modalSystem) modalSystem.style.display = 'none';
+          if (modalSchematic) {
+            modalSchematic.style.display = 'flex';
+            this.drawTacticalMiniMap();
+          }
+        }
+      });
+    });
+
+    // Close buttons for modals
+    document.getElementById('btn-close-schematic')?.addEventListener('click', () => {
+      if (modalSchematic) modalSchematic.style.display = 'none';
+      document.getElementById('btn-mode-3d')?.click();
+    });
+
+    document.getElementById('btn-close-vision')?.addEventListener('click', () => {
+      if (modalSystem) modalSystem.style.display = 'none';
+      document.getElementById('btn-mode-3d')?.click();
+    });
+
+    document.getElementById('btn-close-console')?.addEventListener('click', () => {
+      if (modalConsole) modalConsole.style.display = 'none';
+    });
+
+    document.getElementById('btn-close-bench')?.addEventListener('click', () => {
+      if (modalBench) modalBench.style.display = 'none';
+    });
+
+    // Header toggles
+    document.getElementById('btn-cockpit-menu')?.addEventListener('click', () => {
+      if (modalConsole) modalConsole.style.display = (modalConsole.style.display === 'flex') ? 'none' : 'flex';
+    });
+
+    document.getElementById('btn-toggle-cam-modal')?.addEventListener('click', () => {
+      document.getElementById('btn-mode-system')?.click();
+    });
+
+    document.getElementById('btn-toggle-term-modal')?.addEventListener('click', () => {
+      if (modalConsole) modalConsole.style.display = (modalConsole.style.display === 'flex') ? 'none' : 'flex';
+    });
+
+    document.getElementById('btn-toggle-bench-modal')?.addEventListener('click', () => {
+      if (modalBench) modalBench.style.display = (modalBench.style.display === 'flex') ? 'none' : 'flex';
+    });
+
+    // Bench test buttons
+    document.querySelectorAll('.bench-btn[data-cmd]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const cmd = btn.dataset.cmd;
+        this.dispatchBenchCommand(cmd);
+      });
+    });
+
     // Navigation Tabs (Main Dashboard vs 3D Simulation Sub-Page)
     document.querySelectorAll('.nav-tab').forEach((tab) => {
       tab.addEventListener('click', () => {
         const page = tab.dataset.page;
         this.switchPage(page);
       });
-    });
-
-    // Return to Operations Dashboard button in 3D Simulation view
-    document.getElementById('btn-back-to-dashboard')?.addEventListener('click', () => {
-      this.switchPage('dashboard');
     });
 
     // Global E-Stop Button
@@ -278,32 +634,40 @@ class UIController {
     // Placement Tools
     const hint = document.getElementById('placement-hint');
 
-    document.getElementById('btn-add-fire').addEventListener('click', () => {
+    document.getElementById('btn-add-fire')?.addEventListener('click', () => {
       this.sim.setPlacementMode('fire');
-      hint.textContent = 'Click anywhere on the arena floor to ignite a fire';
-      hint.style.display = 'block';
+      if (hint) {
+        hint.textContent = 'Click anywhere on the arena floor to ignite a fire';
+        hint.style.display = 'block';
+      }
     });
 
-    document.getElementById('btn-add-box').addEventListener('click', () => {
+    document.getElementById('btn-add-box')?.addEventListener('click', () => {
       this.sim.setPlacementMode('box');
-      hint.textContent = 'Click anywhere on the floor to drop a crate obstacle';
-      hint.style.display = 'block';
+      if (hint) {
+        hint.textContent = 'Click anywhere on the floor to drop a crate obstacle';
+        hint.style.display = 'block';
+      }
     });
 
-    document.getElementById('btn-add-wall').addEventListener('click', () => {
+    document.getElementById('btn-add-wall')?.addEventListener('click', () => {
       this.sim.setPlacementMode('wall');
-      hint.textContent = 'Click on the floor to build a divider wall';
-      hint.style.display = 'block';
+      if (hint) {
+        hint.textContent = 'Click on the floor to build a divider wall';
+        hint.style.display = 'block';
+      }
     });
 
-    document.getElementById('btn-add-cylinder').addEventListener('click', () => {
+    document.getElementById('btn-add-cylinder')?.addEventListener('click', () => {
       this.sim.setPlacementMode('cylinder');
-      hint.textContent = 'Click on the floor to place a barrel obstacle';
-      hint.style.display = 'block';
+      if (hint) {
+        hint.textContent = 'Click on the floor to place a barrel obstacle';
+        hint.style.display = 'block';
+      }
     });
 
     this.sim.onPlacementComplete = () => {
-      hint.style.display = 'none';
+      if (hint) hint.style.display = 'none';
     };
 
     this.sim.onFireSpawned = () => {
@@ -315,7 +679,7 @@ class UIController {
       }
     };
 
-    document.getElementById('btn-clear-fires').addEventListener('click', () => {
+    document.getElementById('btn-clear-fires')?.addEventListener('click', () => {
       this.fireSystem.clearAllFires();
       if (this.robotState !== 'MANUAL_TEST' && this.syncMode === 'sil') {
         this.robotState = 'TASK_COMPLETE';
@@ -323,7 +687,7 @@ class UIController {
       }
     });
 
-    document.getElementById('btn-randomize-arena').addEventListener('click', () => {
+    document.getElementById('btn-randomize-arena')?.addEventListener('click', () => {
       this.obstacleManager.randomizeLayout();
       this.fireSystem.clearAllFires();
       this.fireSystem.spawnFire(1.5, 1.5, 1.0);
@@ -334,7 +698,7 @@ class UIController {
       this.stateTimer = 0;
     });
 
-    document.getElementById('btn-reset-robot').addEventListener('click', () => {
+    document.getElementById('btn-reset-robot')?.addEventListener('click', () => {
       this.robot.reset(0, 0, 0);
       if (this.mapper) this.mapper.resetMap();
       this.robotState = 'SEARCHING';
@@ -520,24 +884,26 @@ class UIController {
 
     // 3D Model File Input
     const fileInput = document.getElementById('model-file-input');
-    document.getElementById('btn-upload-model').addEventListener('click', () => {
-      fileInput.click();
+    document.getElementById('btn-upload-model')?.addEventListener('click', () => {
+      if (fileInput) fileInput.click();
     });
 
-    fileInput.addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        const file = e.target.files[0];
-        this.assetLoader.loadFromFile(
-          file,
-          (model) => {
-            alert(`Custom 3D model loaded: ${file.name}`);
-          },
-          (err) => {
-            alert(`Error loading 3D model: ${err.message}`);
-          }
-        );
-      }
-    });
+    if (fileInput) {
+      fileInput.addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+          const file = e.target.files[0];
+          this.assetLoader.loadFromFile(
+            file,
+            (model) => {
+              alert(`Custom 3D model loaded: ${file.name}`);
+            },
+            (err) => {
+              alert(`Error loading 3D model: ${err.message}`);
+            }
+          );
+        }
+      });
+    }
 
     // Teleop On-Screen Keypad
     document.querySelectorAll('.key-btn').forEach((k) => {
@@ -1294,7 +1660,21 @@ class UIController {
       }
     }
 
-    // 3. Visualization & Telemetry Broadcast (Simulation Sub-Page HUD only)
+    // 3. Visualization, Cockpit Telemetry HUD & Animations
+    this.updateCockpitAnimations(dt, telem);
+    this.updateCockpitHud(dt, telem);
+
+    // 4. Update Modals if visible
+    const modalSchematic = document.getElementById('modal-schematic-slam');
+    if (modalSchematic && modalSchematic.style.display !== 'none') {
+      this.drawTacticalMiniMap();
+    }
+    const modalSystem = document.getElementById('modal-system-vision');
+    if (modalSystem && modalSystem.style.display !== 'none') {
+      this.updateDashboardCamera(dt, telem);
+    }
+
+    // 5. Prediction Path & Telemetry Broadcast
     this.computePredictionPath(telem);
     this.updateHud(telem);
     this.broadcastTelemetry(telem);

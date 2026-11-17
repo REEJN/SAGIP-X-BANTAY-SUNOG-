@@ -38,7 +38,7 @@ class SimWorld {
       0.1,
       100.0
     );
-    this.camera.position.set(0, 5.5, 6.5);
+    this.camera.position.set(1.4, 1.8, 2.4);
     this.camera.layers.enable(1); // Enable Layer 1 for debug/AR visualizers on main camera
 
     // Renderer
@@ -366,12 +366,15 @@ class SimWorld {
 
   setViewMode(mode) {
     this.viewMode = mode;
+    const rx = this.robot ? this.robot.position.x : 0;
+    const ry = this.robot ? this.robot.position.y : 0;
+    const rz = this.robot ? this.robot.position.z : 0;
     if (mode === 'top') {
-      this.camera.position.set(0, 11, 0.01);
-      if (this.controls) this.controls.target.set(0, 0, 0);
+      this.camera.position.set(rx, 10, rz + 0.01);
+      if (this.controls) this.controls.target.set(rx, ry + 0.1, rz);
     } else if (mode === 'orbit') {
-      this.camera.position.set(0, 5.5, 6.5);
-      if (this.controls) this.controls.target.set(0, 0.2, 0);
+      this.camera.position.set(rx + 1.4, ry + 1.8, rz + 2.4);
+      if (this.controls) this.controls.target.set(rx, ry + 0.2, rz);
     }
   }
 
@@ -419,6 +422,12 @@ class SimWorld {
       const lookTarget = this.robot.position.clone().add(new THREE.Vector3(0, 0.25, 0));
       this.camera.lookAt(lookTarget);
     } else if (this.controls) {
+      if (this.robot && this.viewMode === 'orbit') {
+        const robotTarget = new THREE.Vector3(this.robot.position.x, this.robot.position.y + 0.15, this.robot.position.z);
+        const delta = robotTarget.clone().sub(this.controls.target).multiplyScalar(0.08);
+        this.controls.target.add(delta);
+        this.camera.position.add(delta);
+      }
       this.controls.update();
     }
 
