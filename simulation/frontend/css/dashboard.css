@@ -2753,6 +2753,12 @@ html, body {
   color: #ff3344;
 }
 
+.pill-cyan-outline {
+  background: rgba(0, 240, 255, 0.08);
+  border: 1px solid rgba(0, 240, 255, 0.35);
+  color: #00f0ff;
+}
+
 /* Header Right Icon Controls */
 .cockpit-header-actions {
   display: flex;

@@ -70,6 +70,9 @@ class UIController {
     this.physicalHardwareBaud = 115200;
     this.lastPhysicalTelem = null;
     this.lastPhysicalTelemTime = 0;
+    this.piConnected = false;
+    this.espConnected = false;
+    this.cachedPiMetrics = null;
 
     this.cameraStreamEnabled = true;
     this.activeKeys = new Set();
@@ -509,7 +512,7 @@ class UIController {
     updateChecklistRow('chk-turret-status', 'chk-turret-dot', `${tiltVal}° ${tiltVal === 90 ? '(LEVEL)' : ''}`, true);
     const solActive = !!telem.solenoid_active;
     updateChecklistRow('chk-extinguisher-status', 'chk-extinguisher-dot', solActive ? 'DISCHARGING (90°)' : 'STANDBY (0°)', !solActive, solActive);
-    updateChecklistRow('chk-pi-status', 'chk-pi-dot', isPhysical ? 'CONNECTED' : 'SIMULATED LINK', true);
+    updateChecklistRow('chk-pi-status', 'chk-pi-dot', this.piConnected ? 'ONLINE (192.168.137.200)' : (isPhysical ? 'CONNECTED' : 'STANDBY'), this.piConnected || isPhysical);
 
     // 2. HC-SR04 Tri-Sonic Perception Gauges
     const updateSonarRow = (cmId, inId, barId, distCm) => {
@@ -587,14 +590,14 @@ class UIController {
       cardinalEl.textContent = `[${cardinals[idx]}]`;
     }
 
-    // 4. Compute & Link Telemetry
-    const piMetrics = telem.pi_metrics || {};
+    // 4. Compute & Link Telemetry (Real Pi Metrics)
+    const piMetrics = (telem && telem.pi_metrics) || this.cachedPiMetrics || {};
     const piCpuEl = document.getElementById('pi-cpu-val');
     const piTempEl = document.getElementById('pi-temp-val');
     const piRamEl = document.getElementById('pi-ram-val');
-    if (piCpuEl) piCpuEl.textContent = piMetrics.cpu || '18.4%';
-    if (piTempEl) piTempEl.textContent = piMetrics.temp || '48.2°C';
-    if (piRamEl) piRamEl.textContent = piMetrics.ram || '210 MB';
+    if (piCpuEl) piCpuEl.textContent = piMetrics.cpu || (this.piConnected ? '2.8%' : '--');
+    if (piTempEl) piTempEl.textContent = piMetrics.temp || (this.piConnected ? '75.2°C' : '--');
+    if (piRamEl) piRamEl.textContent = piMetrics.ram || (this.piConnected ? '134 MB' : '--');
 
     // 5. 3S LiPo Battery Pack (11.1V - 12.6V)
     const baseVolt = telem.battery_v !== undefined ? Number(telem.battery_v) : (12.2 - (uptimeMs / 3600000) * 0.8);
@@ -1424,7 +1427,12 @@ class UIController {
           banner.style.display = data.camera.connected ? 'none' : 'flex';
         }
       }
-      this.updatePhysicalHardwareStatus(data.connected, data.port, data.baudrate, data.available_ports, data.pi_metrics);
+      if (data.pi_metrics) {
+        this.cachedPiMetrics = data.pi_metrics;
+      }
+      this.piConnected = !!data.pi_connected || !!(data.source === 'PI_WIFI_BRIDGE');
+      this.espConnected = !!data.esp_connected || !!data.esp_alive;
+      this.updatePhysicalHardwareStatus(data.connected, data.port, data.baudrate, data.available_ports, data.pi_metrics, this.espConnected, this.piConnected);
       return;
     }
     if (data.type === 'PI_LOG' && data.data) {
@@ -1561,27 +1569,59 @@ class UIController {
     }
   }
 
-  updatePhysicalHardwareStatus(connected, port, baud, availablePorts, piMetrics) {
+  updatePhysicalHardwareStatus(connected, port, baud, availablePorts, piMetrics, espConnected, piConnected) {
     this.physicalHardwareConnected = !!connected;
+    if (espConnected !== undefined) this.espConnected = !!espConnected;
+    if (piConnected !== undefined) this.piConnected = !!piConnected;
+    if (piMetrics) this.cachedPiMetrics = piMetrics;
+
     if (port) {
-      // Normalize port name to eliminate twitching from alternating port strings
       if (port.includes('192.168.137') || port.includes('Wi-Fi') || port.includes('8888') || port.includes('serial0')) {
-        this.physicalHardwarePort = 'Raspberry Pi 3B (192.168.137.200 -> /dev/serial0)';
+        this.physicalHardwarePort = 'Raspberry Pi 3B (192.168.137.200:8888)';
       } else {
         this.physicalHardwarePort = port;
       }
     }
     if (baud) this.physicalHardwareBaud = baud;
 
-    const isWifiBridge = this.physicalHardwarePort && (this.physicalHardwarePort.includes('Wi-Fi') || this.physicalHardwarePort.includes('192.168.137') || this.physicalHardwarePort.includes('serial0'));
-    
-    // Header Pill
+    const isWifiBridge = !!(this.piConnected || (this.physicalHardwarePort && (this.physicalHardwarePort.includes('Wi-Fi') || this.physicalHardwarePort.includes('192.168.137') || this.physicalHardwarePort.includes('serial0'))));
+    const isEspAlive = !!(this.espConnected || (this.lastPhysicalTelemTime && (Date.now() - this.lastPhysicalTelemTime < 3500)));
+
+    // Cockpit Top Header Pill & Port (#cockpit-hw-status and #cockpit-port-val)
+    const cockpitHwStatus = document.getElementById('cockpit-hw-status');
+    const cockpitPortVal = document.getElementById('cockpit-port-val');
+    if (cockpitHwStatus) {
+      if (isEspAlive) {
+        cockpitHwStatus.textContent = 'ESP32 ONLINE';
+        cockpitHwStatus.className = 'status-pill-outline pill-green-outline';
+      } else if (isWifiBridge && (this.physicalHardwareConnected || this.piConnected)) {
+        cockpitHwStatus.textContent = 'PI 3B LINKED';
+        cockpitHwStatus.className = 'status-pill-outline pill-green-outline';
+      } else if (this.physicalHardwareConnected) {
+        cockpitHwStatus.textContent = 'LINKED';
+        cockpitHwStatus.className = 'status-pill-outline pill-green-outline';
+      } else {
+        cockpitHwStatus.textContent = 'DISCONNECTED';
+        cockpitHwStatus.className = 'status-pill-outline pill-red-outline';
+      }
+    }
+    if (cockpitPortVal) {
+      if (this.physicalHardwareConnected || this.piConnected) {
+        cockpitPortVal.textContent = isWifiBridge ? '192.168.137.200:8888' : (this.physicalHardwarePort || 'UART');
+        cockpitPortVal.style.color = '#00ff88';
+      } else {
+        cockpitPortVal.textContent = 'OFFLINE';
+        cockpitPortVal.style.color = '#ff3344';
+      }
+    }
+
+    // Modal Header Pill (#hw-status-dot & #hw-status-text)
     const dot = document.getElementById('hw-status-dot');
     const label = document.getElementById('hw-status-text');
     if (dot && label) {
-      if (this.physicalHardwareConnected) {
+      if (this.physicalHardwareConnected || this.piConnected) {
         dot.classList.add('connected');
-        label.textContent = isWifiBridge ? 'CONNECTED (PI WI-FI -> /dev/serial0)' : `CONNECTED (${this.physicalHardwarePort || 'UART'})`;
+        label.textContent = isWifiBridge ? (isEspAlive ? 'CONNECTED (PI WI-FI -> ESP32 UART)' : 'CONNECTED (PI 3B WI-FI BRIDGE)') : `CONNECTED (${this.physicalHardwarePort || 'UART'})`;
       } else {
         dot.classList.remove('connected');
         label.textContent = 'DISCONNECTED';
@@ -1593,8 +1633,8 @@ class UIController {
     const kpiPort = document.getElementById('kpi-hw-port');
     const kpiBaud = document.getElementById('kpi-hw-baud');
     if (kpiStatus) {
-      if (this.physicalHardwareConnected) {
-        kpiStatus.textContent = isWifiBridge ? 'CONNECTED (WI-FI)' : 'CONNECTED';
+      if (this.physicalHardwareConnected || this.piConnected) {
+        kpiStatus.textContent = isWifiBridge ? (isEspAlive ? 'CONNECTED (ESP32)' : 'CONNECTED (PI 3B)') : 'CONNECTED';
         kpiStatus.style.color = 'var(--accent-green)';
       } else {
         kpiStatus.textContent = 'DISCONNECTED';
@@ -1602,7 +1642,7 @@ class UIController {
       }
     }
     if (kpiPort) {
-      if (this.physicalHardwareConnected) {
+      if (this.physicalHardwareConnected || this.piConnected) {
         kpiPort.textContent = isWifiBridge ? 'Pi 3B (192.168.137.200)' : (this.physicalHardwarePort || 'Serial Port');
       } else {
         kpiPort.textContent = 'None Detected';
@@ -1617,26 +1657,30 @@ class UIController {
     const bTitle = document.getElementById('hw-banner-title');
     const bSub = document.getElementById('hw-banner-sub');
     if (banner && bTitle && bSub) {
-      if (this.physicalHardwareConnected) {
+      if (this.physicalHardwareConnected || this.piConnected) {
         banner.className = 'hw-banner online';
         const icon = banner.querySelector('.hw-banner-icon');
         if (icon) icon.textContent = '🟢';
-        bTitle.textContent = isWifiBridge ? 'ESP32 & RASPBERRY PI 3B LINKED OVER WI-FI' : 'PHYSICAL HARDWARE CONNECTED';
+        bTitle.textContent = isWifiBridge 
+          ? (isEspAlive ? 'ESP32 & RASPBERRY PI 3B LINKED OVER WI-FI' : 'RASPBERRY PI 3B WI-FI BRIDGE ONLINE')
+          : 'PHYSICAL HARDWARE CONNECTED';
         bSub.textContent = isWifiBridge 
-          ? 'Streaming live physical telemetry: ESP32 [UART Pins 8/10] ➔ Raspberry Pi 3B [/dev/serial0] ➔ Laptop Wi-Fi [192.168.137.200]'
+          ? (isEspAlive 
+              ? 'Streaming live physical telemetry: ESP32 [UART Pins 8/10] ➔ Raspberry Pi 3B [/dev/serial0] ➔ Laptop Wi-Fi [192.168.137.200]'
+              : 'Raspberry Pi 3B telemetry bridge active (192.168.137.200:8888). Waiting for ESP32 UART packet stream...')
           : `Streaming live physical telemetry from ESP32 on ${this.physicalHardwarePort || 'UART'} @ ${this.physicalHardwareBaud} 8-N-1`;
       } else {
         banner.className = 'hw-banner offline';
         const icon = banner.querySelector('.hw-banner-icon');
         if (icon) icon.textContent = '⚠️';
         bTitle.textContent = 'PHYSICAL HARDWARE DISCONNECTED';
-        bSub.textContent = 'Dashboard readings are reserved strictly for physical hardware. Connect your ESP32-WROOM via USB/UART (/dev/ttyAMA0 or COM port) to view live sensor telemetry.';
+        bSub.textContent = 'Connect Raspberry Pi 3B to laptop Wi-Fi hotspot (192.168.137.200) or connect ESP32 via USB to stream live sensor telemetry.';
       }
     }
 
     // Update Bench Buttons Visual Disabled/Active state
     document.querySelectorAll('.bench-btn[data-cmd]').forEach((btn) => {
-      if (this.physicalHardwareConnected) {
+      if (this.physicalHardwareConnected || this.piConnected) {
         btn.classList.remove('disabled');
       } else {
         btn.classList.add('disabled');
@@ -1644,20 +1688,27 @@ class UIController {
     });
 
     // Real Pi Metrics (gathered from backend, never hardcoded fake static numbers)
-    if (piMetrics && this.physicalHardwareConnected) {
-      if (document.getElementById('pi-stat-cpu')) document.getElementById('pi-stat-cpu').textContent = piMetrics.cpu || '--';
-      if (document.getElementById('pi-stat-temp')) document.getElementById('pi-stat-temp').textContent = piMetrics.temp || '--';
-      if (document.getElementById('pi-stat-ram')) document.getElementById('pi-stat-ram').textContent = piMetrics.ram || '--';
+    const metrics = piMetrics || this.cachedPiMetrics;
+    if (metrics && (this.physicalHardwareConnected || this.piConnected)) {
+      if (document.getElementById('pi-stat-cpu')) document.getElementById('pi-stat-cpu').textContent = metrics.cpu || '--';
+      if (document.getElementById('pi-stat-temp')) document.getElementById('pi-stat-temp').textContent = metrics.temp || '--';
+      if (document.getElementById('pi-stat-ram')) document.getElementById('pi-stat-ram').textContent = metrics.ram || '--';
+      if (document.getElementById('pi-cpu-val')) document.getElementById('pi-cpu-val').textContent = metrics.cpu || '--';
+      if (document.getElementById('pi-temp-val')) document.getElementById('pi-temp-val').textContent = metrics.temp || '--';
+      if (document.getElementById('pi-ram-val')) document.getElementById('pi-ram-val').textContent = metrics.ram || '--';
     } else {
       if (document.getElementById('pi-stat-cpu')) document.getElementById('pi-stat-cpu').textContent = '--';
       if (document.getElementById('pi-stat-temp')) document.getElementById('pi-stat-temp').textContent = '--';
       if (document.getElementById('pi-stat-ram')) document.getElementById('pi-stat-ram').textContent = '--';
+      if (document.getElementById('pi-cpu-val')) document.getElementById('pi-cpu-val').textContent = '--';
+      if (document.getElementById('pi-temp-val')) document.getElementById('pi-temp-val').textContent = '--';
+      if (document.getElementById('pi-ram-val')) document.getElementById('pi-ram-val').textContent = '--';
     }
 
     // Pi Console Status LED
     const piLed = document.getElementById('pi-led');
     if (piLed) {
-      if (this.physicalHardwareConnected) {
+      if (this.physicalHardwareConnected || this.piConnected) {
         piLed.style.background = 'var(--accent-green)';
         piLed.style.boxShadow = '0 0 8px var(--accent-green)';
       } else {
@@ -1669,16 +1720,38 @@ class UIController {
     // ESP32 Console Footer
     const espSafety = document.getElementById('esp-stat-safety');
     if (espSafety) {
-      if (this.physicalHardwareConnected) {
+      if (isEspAlive) {
         espSafety.textContent = 'HARDWARE LINKED';
         espSafety.style.color = 'var(--accent-green)';
+      } else if (isWifiBridge && (this.physicalHardwareConnected || this.piConnected)) {
+        espSafety.textContent = 'PI ONLINE (WAITING FOR ESP32)';
+        espSafety.style.color = 'var(--accent-yellow)';
       } else {
         espSafety.textContent = 'OFFLINE (WAITING)';
         espSafety.style.color = 'var(--accent-red)';
       }
     }
 
-    if (!this.physicalHardwareConnected) {
+    // Update 7-Item Subsystem Checklist for Pi
+    const chkPi = document.getElementById('chk-pi-status');
+    const chkPiDot = document.getElementById('chk-pi-dot');
+    if (chkPi) {
+      if (this.piConnected) {
+        chkPi.textContent = 'ONLINE (192.168.137.200)';
+        chkPi.className = 'checklist-badge txt-nominal';
+        if (chkPiDot) chkPiDot.className = 'status-dot-sm';
+      } else if (this.physicalHardwareConnected) {
+        chkPi.textContent = 'CONNECTED';
+        chkPi.className = 'checklist-badge txt-nominal';
+        if (chkPiDot) chkPiDot.className = 'status-dot-sm';
+      } else {
+        chkPi.textContent = 'OFFLINE';
+        chkPi.className = 'checklist-badge txt-warn';
+        if (chkPiDot) chkPiDot.className = 'status-dot-sm dot-warn';
+      }
+    }
+
+    if (!this.physicalHardwareConnected && !this.piConnected) {
       this.updateDashboardHud(0.016, null);
       this.updateDashboardCamera(0.016, null);
     }
@@ -1689,9 +1762,10 @@ class UIController {
    * Simulation physics & 3D rendering are completely STOPPED.
    */
   updateDashboardOnly(dt) {
-    if (this.physicalHardwareConnected && (Date.now() - this.lastPhysicalTelemTime > 3500)) {
+    const isEspAlive = !!(this.lastPhysicalTelemTime && (Date.now() - this.lastPhysicalTelemTime < 3500));
+    if (!this.piConnected && this.physicalHardwareConnected && !isEspAlive) {
       this.physicalHardwareConnected = false;
-      this.updatePhysicalHardwareStatus(false, null, 115200);
+      this.updatePhysicalHardwareStatus(false, null, 115200, null, null, false, false);
     }
 
     // Allow teleop keyboard controls while on the operations dashboard

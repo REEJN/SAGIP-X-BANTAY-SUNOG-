@@ -414,14 +414,16 @@ async def periodic_status_task():
         metrics = get_pi_metrics()
         status_pkt = json.dumps({
             "type": "HARDWARE_STATUS",
-            "connected": esp_alive,
+            "connected": True,
+            "pi_connected": True,
+            "esp_connected": esp_alive,
+            "esp_alive": esp_alive,
             "port": f"Raspberry Pi 3B (192.168.137.200 -> {UART_PORT})",
             "baudrate": UART_BAUD,
             "available_ports": [UART_PORT],
             "pi_metrics": metrics,
             "camera": camera_status,
             "source": "PI_WIFI_BRIDGE",
-            "esp_alive": esp_alive,
             "last_esp_packet_age": round(now - last_esp_packet_time, 2) if last_esp_packet_time > 0 else 999.0
         })
         await broadcast_to_clients(status_pkt)
@@ -448,13 +450,17 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
     esp_alive = bool(ser_conn and ser_conn.is_open and (time.time() - last_esp_packet_time < 3.0))
     status_pkt = json.dumps({
         "type": "HARDWARE_STATUS",
-        "connected": esp_alive,
+        "connected": True,
+        "pi_connected": True,
+        "esp_connected": esp_alive,
+        "esp_alive": esp_alive,
         "port": f"Raspberry Pi 3B (192.168.137.200 -> {UART_PORT})",
         "baudrate": UART_BAUD,
         "available_ports": [UART_PORT],
         "pi_metrics": metrics,
         "camera": camera_status,
-        "source": "PI_WIFI_BRIDGE"
+        "source": "PI_WIFI_BRIDGE",
+        "last_esp_packet_age": round(time.time() - last_esp_packet_time, 2) if last_esp_packet_time > 0 else 999.0
     })
     writer.write((status_pkt + "\n").encode("utf-8"))
     await writer.drain()

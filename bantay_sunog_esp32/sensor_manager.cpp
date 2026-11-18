@@ -116,6 +116,7 @@ bool SensorManager::_initMpu6050() {
     pinMode(PIN_I2C_SDA, INPUT_PULLUP);
     pinMode(PIN_I2C_SCL, INPUT_PULLUP);
     Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, MPU6050_I2C_FREQ_HZ);
+    Wire.setTimeOut(35); // 35ms safety timeout: prevents hang if I2C wires are disconnected or noisy
 
     // Auto-probe candidate addresses: 0x68 (AD0=GND) and 0x69 (AD0=VCC/floating)
     uint8_t addrs[2] = {0x68, 0x69};
