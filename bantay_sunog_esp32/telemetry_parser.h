@@ -5,6 +5,8 @@
 #include "config.h"
 #include "types.h"
 
+typedef void (*ParserCommandCallback)(const char* cmd);
+
 /**
  * Non-blocking UART2 receiver and JSON parser for Raspberry Pi vision messages.
  */
@@ -27,6 +29,7 @@ public:
     bool isTargetFresh() const;
     void invalidateTarget();
     void injectTarget(VisionEvent evt, float conf, float x, float y);
+    void setCommandCallback(ParserCommandCallback cb) { _cmdCallback = cb; }
 
 private:
     void _parseJsonLine(const char* line);
@@ -35,4 +38,5 @@ private:
     char _rxBuffer[384];
     size_t _rxIndex;
     bool _newMsgParsed;
+    ParserCommandCallback _cmdCallback;
 };

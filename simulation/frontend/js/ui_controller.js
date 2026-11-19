@@ -2078,6 +2078,7 @@ class UIController {
       }
       telem.sync_mode = this.syncMode;
       telem.robot_state = this.robotState;
+      telem.active_teleop = (this.activeKeys && this.activeKeys.size > 0);
       this.socket.send(JSON.stringify(telem));
     }
   }

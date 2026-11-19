@@ -386,8 +386,9 @@ async def handle_ws(websocket):
                     except Exception as e:
                         logger.error(f"[Vision AI Error] {e}")
 
-                # Handle Sim -> Hardware command dispatch (including teleop overrides in hw2sim)
-                if sync_mode in ("sim2hw", "teleop", "hw2sim") and SyncBridge.serial_conn:
+                # Handle Sim -> Hardware command dispatch (including teleop overrides in any mode)
+                is_teleop = data.get("active_teleop", False)
+                if (sync_mode in ("sim2hw", "teleop", "hw2sim") or is_teleop) and SyncBridge.serial_conn:
                     # Translate simulated movement or spray to physical ESP32
                     left_pwm = data.get("left_pwm", 0)
                     right_pwm = data.get("right_pwm", 0)

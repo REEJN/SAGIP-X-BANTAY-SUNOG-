@@ -471,12 +471,17 @@ async def handle_client(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             if not line:
                 break
             cmd_str = line.decode("utf-8", errors="replace").strip()
-            if cmd_str and ser_conn and ser_conn.is_open:
-                try:
-                    ser_conn.write((cmd_str + "\n").encode("utf-8"))
-                    ser_conn.flush()
-                except Exception as write_err:
-                    print(f"[UART TX ERR] {write_err}")
+            if cmd_str:
+                print(f"[TCP Bridge] Received command from dashboard: '{cmd_str}'")
+                if ser_conn and ser_conn.is_open:
+                    try:
+                        ser_conn.write((cmd_str + "\n").encode("utf-8"))
+                        ser_conn.flush()
+                        print(f"[UART TX] Successfully forwarded '{cmd_str}' to ESP32 on {UART_PORT}")
+                    except Exception as write_err:
+                        print(f"[UART TX ERR] Failed to write '{cmd_str}': {write_err}")
+                else:
+                    print(f"[UART TX WARN] Cannot write '{cmd_str}': ser_conn is not open ({ser_conn})")
     except Exception as e:
         print(f"[TCP] Client {peer} connection error: {e}")
     finally:

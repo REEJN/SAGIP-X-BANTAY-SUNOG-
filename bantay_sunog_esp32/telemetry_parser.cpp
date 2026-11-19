@@ -1,6 +1,6 @@
 #include "telemetry_parser.h"
 
-TelemetryParser::TelemetryParser() : _rxIndex(0), _newMsgParsed(false) {
+TelemetryParser::TelemetryParser() : _rxIndex(0), _newMsgParsed(false), _cmdCallback(nullptr) {
     _currentTarget.reset();
 }
 
@@ -35,23 +35,40 @@ bool TelemetryParser::update() {
 }
 
 void TelemetryParser::_parseJsonLine(const char* line) {
-    // Check for raw text commands first (resilient fallback)
-    if (strncmp(line, "START_PATROL", 12) == 0 || strncmp(line, "START", 5) == 0) {
+    if (!line || strlen(line) == 0) return;
+
+    // Skip leading whitespace
+    while (*line == ' ' || *line == '\t') line++;
+    if (*line == '\0') return;
+
+    // Check for raw mission control commands
+    if (strcasecmp(line, "START_PATROL") == 0 || strcasecmp(line, "START") == 0 || strcasecmp(line, "patrol") == 0) {
         _currentTarget.event = EVENT_START_PATROL;
         _currentTarget.last_update_ms = millis();
         _newMsgParsed = true;
+        if (_cmdCallback) _cmdCallback("start");
         return;
     }
-    if (strncmp(line, "PAUSE", 5) == 0 || strncmp(line, "IDLE", 4) == 0 || strncmp(line, "STANDBY", 7) == 0) {
+    if (strcasecmp(line, "PAUSE") == 0 || strcasecmp(line, "IDLE") == 0 || strcasecmp(line, "STANDBY") == 0 || strcasecmp(line, "stop") == 0) {
         _currentTarget.event = EVENT_PAUSE_STANDBY;
         _currentTarget.last_update_ms = millis();
         _newMsgParsed = true;
+        if (_cmdCallback) _cmdCallback("pause");
         return;
     }
-    if (strncmp(line, "PI_READY", 8) == 0) {
+    if (strcasecmp(line, "PI_READY") == 0 || strcasecmp(line, "ready") == 0 || strcasecmp(line, "handshake") == 0) {
         _currentTarget.event = EVENT_PI_READY;
         _currentTarget.last_update_ms = millis();
         _newMsgParsed = true;
+        if (_cmdCallback) _cmdCallback("handshake");
+        return;
+    }
+
+    // Raw non-JSON bench and teleop commands ('w', 's', 'a', 'd', 'x', 'f', 'u', 'j', 'h', 'sweep', 'tilt ...', etc.)
+    if (line[0] != '{') {
+        if (_cmdCallback) {
+            _cmdCallback(line);
+        }
         return;
     }
 
@@ -63,7 +80,8 @@ void TelemetryParser::_parseJsonLine(const char* line) {
 
     DeserializationError error = deserializeJson(doc, line);
     if (error) {
-        // Malformed line or partial packet - ignore
+        // If not valid JSON, treat as raw command if possible
+        if (_cmdCallback) _cmdCallback(line);
         return;
     }
 
@@ -71,23 +89,35 @@ void TelemetryParser::_parseJsonLine(const char* line) {
 
     // Check type or cmd fields for handshake/mission control
     const char* typeStr = doc["type"] | doc["cmd"] | "";
-    if (strcmp(typeStr, "PI_READY") == 0) {
+    if (strcasecmp(typeStr, "PI_READY") == 0) {
         _currentTarget.event = EVENT_PI_READY;
         _currentTarget.last_update_ms = now;
         _newMsgParsed = true;
+        if (_cmdCallback) _cmdCallback("handshake");
         return;
     }
-    if (strcmp(typeStr, "START_PATROL") == 0 || strcmp(typeStr, "START") == 0) {
+    if (strcasecmp(typeStr, "START_PATROL") == 0 || strcasecmp(typeStr, "START") == 0) {
         _currentTarget.event = EVENT_START_PATROL;
         _currentTarget.last_update_ms = now;
         _newMsgParsed = true;
+        if (_cmdCallback) _cmdCallback("start");
         return;
     }
-    if (strcmp(typeStr, "PAUSE") == 0 || strcmp(typeStr, "IDLE") == 0 || strcmp(typeStr, "STANDBY") == 0) {
+    if (strcasecmp(typeStr, "PAUSE") == 0 || strcasecmp(typeStr, "IDLE") == 0 || strcasecmp(typeStr, "STANDBY") == 0) {
         _currentTarget.event = EVENT_PAUSE_STANDBY;
         _currentTarget.last_update_ms = now;
         _newMsgParsed = true;
+        if (_cmdCallback) _cmdCallback("pause");
         return;
+    }
+
+    // Direct JSON command parameter: {"cmd":"w"} or {"type":"BENCH_COMMAND","cmd":"f"}
+    if (doc.containsKey("cmd")) {
+        const char* c = doc["cmd"];
+        if (c && _cmdCallback) {
+            _cmdCallback(c);
+            return;
+        }
     }
 
     const char* eventStr = doc["event"];

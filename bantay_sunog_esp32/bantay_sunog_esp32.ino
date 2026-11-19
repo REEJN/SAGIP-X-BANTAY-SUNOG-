@@ -75,6 +75,135 @@ void printTestMenu() {
     Serial.println("=======================================================\n");
 }
 
+void logMsg(const char* msg) {
+    Serial.println(msg);
+    Serial2.println(msg);
+}
+
+void executeCommand(String cmd) {
+    cmd.trim();
+    if (cmd.length() == 0) return;
+
+    if (cmd.equalsIgnoreCase("help") || cmd.equalsIgnoreCase("m") || cmd.equals("?")) {
+        printTestMenu();
+    } else if (cmd.equalsIgnoreCase("check") || cmd.equalsIgnoreCase("c")) {
+        transitionTo(STATE_MANUAL_TEST);
+        motorCtrl.runDriverCheck();
+    } else if (cmd.equalsIgnoreCase("pins") || cmd.equalsIgnoreCase("p")) {
+        transitionTo(STATE_MANUAL_TEST);
+        motorCtrl.testDirectGpios();
+    } else if (cmd.equalsIgnoreCase("w")) {
+        transitionTo(STATE_MANUAL_TEST);
+        lastManualCmdMs = millis();
+        motorCtrl.forward(SPEED_APPROACH_BASE);
+        logMsg("[CMD] Moving FORWARD (Continuous Teleop)");
+    } else if (cmd.equalsIgnoreCase("s")) {
+        transitionTo(STATE_MANUAL_TEST);
+        lastManualCmdMs = millis();
+        motorCtrl.reverse(SPEED_APPROACH_BASE);
+        logMsg("[CMD] Moving REVERSE (Continuous Teleop)");
+    } else if (cmd.equalsIgnoreCase("a")) {
+        transitionTo(STATE_MANUAL_TEST);
+        lastManualCmdMs = millis();
+        motorCtrl.pivotLeft(SPEED_PIVOT_ALIGN);
+        logMsg("[CMD] Pivoting LEFT (Continuous Teleop)");
+    } else if (cmd.equalsIgnoreCase("d")) {
+        transitionTo(STATE_MANUAL_TEST);
+        lastManualCmdMs = millis();
+        motorCtrl.pivotRight(SPEED_PIVOT_ALIGN);
+        logMsg("[CMD] Pivoting RIGHT (Continuous Teleop)");
+    } else if (cmd.equalsIgnoreCase("x")) {
+        transitionTo(STATE_MANUAL_TEST);
+        motorCtrl.stop();
+        servoCtrl.releaseExtinguisher();
+        logMsg("[CMD] STOP: All actuators halted.");
+    } else if (cmd.equalsIgnoreCase("u")) {
+        int newAngle = servoCtrl.getAngle() + 10;
+        servoCtrl.setAngle(newAngle);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[CMD] Tilt UP: %d deg", servoCtrl.getAngle());
+        logMsg(buf);
+    } else if (cmd.equalsIgnoreCase("j")) {
+        int newAngle = servoCtrl.getAngle() - 10;
+        servoCtrl.setAngle(newAngle);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[CMD] Tilt DOWN: %d deg", servoCtrl.getAngle());
+        logMsg(buf);
+    } else if (cmd.equalsIgnoreCase("h")) {
+        servoCtrl.home();
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[CMD] Tilt HOME: %d deg (level)", servoCtrl.getAngle());
+        logMsg(buf);
+    } else if (cmd.startsWith("tilt ") || cmd.startsWith("TILT ")) {
+        int newAngle = cmd.substring(5).toInt();
+        servoCtrl.setAngle(newAngle);
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[CMD] Tilt turret set to %d deg", servoCtrl.getAngle());
+        logMsg(buf);
+    } else if (cmd.equalsIgnoreCase("sweep")) {
+        logMsg("[TEST] Executing full servo sweep...");
+        for (int a = 90; a >= SERVO_TILT_MIN; a -= 2) { servoCtrl.setAngle(a); delay(20); }
+        for (int a = SERVO_TILT_MIN; a <= SERVO_TILT_MAX; a += 2) { servoCtrl.setAngle(a); delay(20); }
+        for (int a = SERVO_TILT_MAX; a >= SERVO_TILT_HOME; a -= 2) { servoCtrl.setAngle(a); delay(20); }
+        logMsg("[TEST] Sweep complete. Restored to 90 deg.");
+    } else if (cmd.equalsIgnoreCase("f")) {
+        transitionTo(STATE_MANUAL_TEST);
+        logMsg("[TEST] Squeezing Fire Extinguisher Can Trigger (MG996R on GPIO 23) for 1.0 second...");
+        servoCtrl.triggerExtinguisher();
+        delay(1000);
+        servoCtrl.releaseExtinguisher();
+        logMsg("[TEST] Extinguisher trigger released.");
+    } else if (cmd.equalsIgnoreCase("start") || cmd.equalsIgnoreCase("patrol") || cmd.equalsIgnoreCase("g")) {
+        transitionTo(STATE_SEARCHING);
+        logMsg("[CMD] Autonomous patrol started (STATE_SEARCHING).");
+    } else if (cmd.equalsIgnoreCase("pause") || cmd.equalsIgnoreCase("idle") || cmd.equalsIgnoreCase("stop")) {
+        motorCtrl.stop();
+        transitionTo(STATE_IDLE);
+        logMsg("[CMD] Robot halted in safe standby (STATE_IDLE).");
+    } else if (cmd.equalsIgnoreCase("handshake") || cmd.equalsIgnoreCase("ready")) {
+        transitionTo(STATE_IDLE);
+        logMsg("[HANDSHAKE] Manual override: Pi handshake confirmed (STATE_IDLE).");
+    } else if (cmd.equalsIgnoreCase("r")) {
+        char buf[128];
+        snprintf(buf, sizeof(buf), "[SENSORS] Front: %.1f cm | Left: %.1f cm | Right: %.1f cm | Flame: [%s]",
+                 sensorMgr.getFrontDistance(), sensorMgr.getLeftDistance(), sensorMgr.getRightDistance(),
+                 sensorMgr.isFlameDetected() ? "FIRE DETECTED!" : "CLEAR");
+        logMsg(buf);
+    } else if (cmd.equalsIgnoreCase("t")) {
+        streamSensorsActive = !streamSensorsActive;
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[TEST] Continuous sensor stream: %s",
+                 streamSensorsActive ? "ENABLED (Type 't' to stop)" : "DISABLED");
+        logMsg(buf);
+    } else if (cmd.equalsIgnoreCase("sim")) {
+        parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.95f, 0.50f, 0.50f);
+        logMsg("[SIM] Injected FIRE_CONFIRMED centered (x=0.50, y=0.50)");
+    } else if (cmd.equalsIgnoreCase("simL")) {
+        parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.92f, 0.20f, 0.50f);
+        logMsg("[SIM] Injected FIRE_CONFIRMED on LEFT flank (x=0.20, y=0.50)");
+    } else if (cmd.equalsIgnoreCase("simR")) {
+        parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.92f, 0.80f, 0.50f);
+        logMsg("[SIM] Injected FIRE_CONFIRMED on RIGHT flank (x=0.80, y=0.50)");
+    } else if (cmd.equalsIgnoreCase("simClose")) {
+        parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.98f, 0.50f, 0.75f);
+        logMsg("[SIM] Injected CLOSE FIRE target (x=0.50, y=0.75)");
+    } else if (cmd.equalsIgnoreCase("simLost")) {
+        parser.injectTarget(EVENT_FIRE_LOST, 0.0f, 0.0f, 0.0f);
+        logMsg("[SIM] Injected FIRE_LOST (Target extinguished / disappeared)");
+    } else if (cmd.equalsIgnoreCase("auto")) {
+        transitionTo(STATE_SEARCHING);
+        logMsg("[CMD] Switched to Autonomous FSM Search Mode");
+    } else if (cmd.equalsIgnoreCase("test") || cmd.equalsIgnoreCase("manual")) {
+        transitionTo(STATE_MANUAL_TEST);
+        motorCtrl.stop();
+        logMsg("[CMD] Switched to Manual Bench Test Mode");
+    } else {
+        char buf[64];
+        snprintf(buf, sizeof(buf), "[CMD] Unknown command: %s", cmd.c_str());
+        logMsg(buf);
+    }
+}
+
 void handleSerialCommands() {
     while (Serial.available() > 0) {
         char c = (char)Serial.read();
@@ -83,127 +212,7 @@ void handleSerialCommands() {
             if (serialInputBuffer.length() > 0) {
                 String cmd = serialInputBuffer;
                 serialInputBuffer = "";
-
-                if (cmd.equalsIgnoreCase("help") || cmd.equalsIgnoreCase("m") || cmd.equals("?")) {
-                    printTestMenu();
-                } else if (cmd.equalsIgnoreCase("check") || cmd.equalsIgnoreCase("c")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    motorCtrl.runDriverCheck();
-                } else if (cmd.equalsIgnoreCase("pins") || cmd.equalsIgnoreCase("p")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    motorCtrl.testDirectGpios();
-                } else if (cmd.equalsIgnoreCase("w")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    lastManualCmdMs = millis();
-                    motorCtrl.forward(SPEED_APPROACH_BASE);
-                    Serial.println("[CMD] Moving FORWARD (Continuous Teleop)");
-                } else if (cmd.equalsIgnoreCase("s")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    lastManualCmdMs = millis();
-                    motorCtrl.reverse(SPEED_APPROACH_BASE);
-                    Serial.println("[CMD] Moving REVERSE (Continuous Teleop)");
-                } else if (cmd.equalsIgnoreCase("a")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    lastManualCmdMs = millis();
-                    motorCtrl.pivotLeft(SPEED_PIVOT_ALIGN);
-                    Serial.println("[CMD] Pivoting LEFT (Continuous Teleop)");
-                } else if (cmd.equalsIgnoreCase("d")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    lastManualCmdMs = millis();
-                    motorCtrl.pivotRight(SPEED_PIVOT_ALIGN);
-                    Serial.println("[CMD] Pivoting RIGHT (Continuous Teleop)");
-                } else if (cmd.equalsIgnoreCase("x")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    motorCtrl.stop();
-                    servoCtrl.releaseExtinguisher();
-                    Serial.println("[CMD] STOP: All actuators halted.");
-                } else if (cmd.equalsIgnoreCase("u")) {
-                    int newAngle = servoCtrl.getAngle() + 10;
-                    servoCtrl.setAngle(newAngle);
-                    Serial.printf("[CMD] Tilt UP: %d deg\n", servoCtrl.getAngle());
-                } else if (cmd.equalsIgnoreCase("j")) {
-                    int newAngle = servoCtrl.getAngle() - 10;
-                    servoCtrl.setAngle(newAngle);
-                    Serial.printf("[CMD] Tilt DOWN: %d deg\n", servoCtrl.getAngle());
-                } else if (cmd.equalsIgnoreCase("h")) {
-                    servoCtrl.home();
-                    Serial.printf("[CMD] Tilt HOME: %d deg (level)\n", servoCtrl.getAngle());
-                } else if (cmd.startsWith("tilt ") || cmd.startsWith("TILT ")) {
-                    int newAngle = cmd.substring(5).toInt();
-                    servoCtrl.setAngle(newAngle);
-                    Serial.printf("[CMD] Tilt turret set to %d deg\n", servoCtrl.getAngle());
-                } else if (cmd.equalsIgnoreCase("sweep")) {
-                    Serial.println("[TEST] Executing full servo sweep...");
-                    for (int a = 90; a >= SERVO_TILT_MIN; a -= 2) { servoCtrl.setAngle(a); delay(20); }
-                    for (int a = SERVO_TILT_MIN; a <= SERVO_TILT_MAX; a += 2) { servoCtrl.setAngle(a); delay(20); }
-                    for (int a = SERVO_TILT_MAX; a >= SERVO_TILT_HOME; a -= 2) { servoCtrl.setAngle(a); delay(20); }
-                    Serial.println("[TEST] Sweep complete. Restored to 90 deg.");
-                } else if (cmd.equalsIgnoreCase("f")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    Serial.println("[TEST] Squeezing Fire Extinguisher Can Trigger (MG996R on GPIO 23) for 1.0 second...");
-                    servoCtrl.triggerExtinguisher();
-                    delay(1000);
-                    servoCtrl.releaseExtinguisher();
-                    Serial.println("[TEST] Extinguisher trigger released.");
-                } else if (cmd.equalsIgnoreCase("start") || cmd.equalsIgnoreCase("patrol") || cmd.equalsIgnoreCase("g")) {
-                    transitionTo(STATE_SEARCHING);
-                    Serial.println("[CMD] Autonomous patrol started (STATE_SEARCHING).");
-                } else if (cmd.equalsIgnoreCase("pause") || cmd.equalsIgnoreCase("idle") || cmd.equalsIgnoreCase("stop")) {
-                    motorCtrl.stop();
-                    transitionTo(STATE_IDLE);
-                    Serial.println("[CMD] Robot halted in safe standby (STATE_IDLE).");
-                } else if (cmd.equalsIgnoreCase("handshake") || cmd.equalsIgnoreCase("ready")) {
-                    transitionTo(STATE_IDLE);
-                    Serial.println("[HANDSHAKE] Manual override: Pi handshake confirmed (STATE_IDLE).");
-                } else if (cmd.equalsIgnoreCase("r")) {
-                    Serial.printf("[SENSORS] Front: %.1f cm | Left: %.1f cm | Right: %.1f cm | Flame Sensor: [%s]\n",
-                                  sensorMgr.getFrontDistance(),
-                                  sensorMgr.getLeftDistance(),
-                                  sensorMgr.getRightDistance(),
-                                  sensorMgr.isFlameDetected() ? "FIRE DETECTED!" : "CLEAR");
-                } else if (cmd.equalsIgnoreCase("t")) {
-                    streamSensorsActive = !streamSensorsActive;
-                    Serial.printf("[TEST] Continuous sensor stream: %s\n",
-                                  streamSensorsActive ? "ENABLED (Type 't' to stop)" : "DISABLED");
-                } else if (cmd.equalsIgnoreCase("sim")) {
-                    parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.95f, 0.50f, 0.50f);
-                    Serial.println("[SIM] Injected FIRE_CONFIRMED centered (x=0.50, y=0.50)");
-                    if (currentState == STATE_MANUAL_TEST) {
-                        Serial.println("[SIM] Note: Type 'auto' to enable autonomous tracking!");
-                    }
-                } else if (cmd.equalsIgnoreCase("simL")) {
-                    parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.92f, 0.20f, 0.50f);
-                    Serial.println("[SIM] Injected FIRE_CONFIRMED on LEFT (x=0.20, y=0.50)");
-                    if (currentState == STATE_MANUAL_TEST) {
-                        Serial.println("[SIM] Note: Type 'auto' to enable autonomous tracking!");
-                    }
-                } else if (cmd.equalsIgnoreCase("simR")) {
-                    parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.92f, 0.80f, 0.50f);
-                    Serial.println("[SIM] Injected FIRE_CONFIRMED on RIGHT (x=0.80, y=0.50)");
-                    if (currentState == STATE_MANUAL_TEST) {
-                        Serial.println("[SIM] Note: Type 'auto' to enable autonomous tracking!");
-                    }
-                } else if (cmd.equalsIgnoreCase("simU")) {
-                    parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.90f, 0.50f, 0.20f);
-                    Serial.println("[SIM] Injected FIRE_CONFIRMED ELEVATED (x=0.50, y=0.20)");
-                } else if (cmd.equalsIgnoreCase("simD")) {
-                    parser.injectTarget(EVENT_FIRE_CONFIRMED, 0.90f, 0.50f, 0.80f);
-                    Serial.println("[SIM] Injected FIRE_CONFIRMED LOW (x=0.50, y=0.80)");
-                } else if (cmd.equalsIgnoreCase("clear")) {
-                    parser.injectTarget(EVENT_NO_FIRE, 0.0f, 0.5f, 0.5f);
-                    Serial.println("[SIM] Injected NO_FIRE target cleared.");
-                } else if (cmd.equalsIgnoreCase("test")) {
-                    transitionTo(STATE_MANUAL_TEST);
-                    motorCtrl.stop();
-                    servoCtrl.releaseExtinguisher();
-                    Serial.println("[MODE] Entered MANUAL_TEST mode. Autonomous navigation paused.");
-                    Serial.println("       Type 'help' or 'm' to see all test commands.");
-                } else if (cmd.equalsIgnoreCase("auto")) {
-                    transitionTo(STATE_SEARCHING);
-                    Serial.println("[MODE] Resumed AUTONOMOUS firefighting operation.");
-                } else {
-                    Serial.printf("Unknown command '%s'. Type 'help' or 'm' for menu.\n", cmd.c_str());
-                }
+                executeCommand(cmd);
             }
         } else {
             serialInputBuffer += c;
@@ -234,6 +243,7 @@ void setup() {
     // 2. Initialize subsystems
     Serial.println("[INIT] Initializing UART2 communication with Pi...");
     parser.begin();
+    parser.setCommandCallback([](const char* c) { executeCommand(String(c)); });
 
     Serial.println("[INIT] Initializing TB6612FNG motor driver...");
     motorCtrl.begin();
